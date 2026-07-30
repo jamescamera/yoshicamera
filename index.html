@@ -257,16 +257,16 @@
   <div class="field">
     <label>Dither</label>
     <div class="seg" id="segDither">
-      <button class="b on" data-v="blue">Blue</button>
+      <button class="b" data-v="blue">Blue</button>
       <button class="b" data-v="ordered">Ordered</button>
       <button class="b" data-v="white">White</button>
-      <button class="b" data-v="off">Off</button>
+      <button class="b on" data-v="off">Off</button>
     </div>
   </div>
   <div class="grid2">
-    <div class="field"><label>Grain <b id="vGrain">150</b></label><input type="range" id="sGrain" min="40" max="340" value="150"></div>
+    <div class="field"><label>Grain <b id="vGrain">340</b></label><input type="range" id="sGrain" min="40" max="340" value="340"></div>
     <div class="field"><label>Fidelity <b id="vFid">0</b></label><input type="range" id="sFid" min="0" max="100" value="0"></div>
-    <div class="field"><label>Agitate <b id="vAgit">16</b></label><input type="range" id="sAgit" min="0" max="100" value="16"></div>
+    <div class="field"><label>Agitate <b id="vAgit">0</b></label><input type="range" id="sAgit" min="0" max="100" value="0"></div>
   </div>
   <div class="field">
     <div class="row">
@@ -335,7 +335,7 @@
 
   var W=0,H=0,DPR=1;
   var facing='user', stream=null, ready=false, held=false, plate=false;
-  var opt={ order:'hilbert', grain:150, fid:0, dither:'blue', agit:16 };
+  var opt={ order:'hilbert', grain:340, fid:0, dither:'off', agit:0 };
 
   var raf = window.requestAnimationFrame || window.webkitRequestAnimationFrame ||
             function(f){ return setTimeout(f,16); };
