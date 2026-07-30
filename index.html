@@ -280,7 +280,7 @@
       <button class="b" id="bClose">Close</button>
     </div>
   </div>
-  <p class="note">Dither is applied to the sort order, not the output — every colour is still used exactly once. Agitate raises it from banding-fix to full boil. The frame button sets what the shutter and the recorder produce, and the dimmed area shows what gets cut. Turn the phone for a wide shot, or leave it upright and pick Wide 16:9. The shutter develops a much larger frame — a second or two. Plate shows the palette alone, unrolled along the curve. Fidelity above zero blends back toward the true colour and breaks the once-each rule.</p>
+  <p class="note">Dither is applied to the sort order, not the output — every colour is still used exactly once. Agitate raises it from banding-fix to full boil. The frame button sets what the shutter and the recorder produce, and the corner marks show what gets kept. Turn the phone for a wide shot, or leave it upright and pick Wide 16:9. The shutter develops a much larger frame — a second or two. Plate shows the palette alone, unrolled along the curve. Fidelity above zero blends back toward the true colour and breaks the once-each rule.</p>
   <div class="credit">
     <a href="https://x.com/minted_i">By Yoshi Babaganoush</a>
     <a href="LICENSE">MIT</a>
@@ -785,7 +785,8 @@
     drawGuide();
   }
 
-  /* what will actually be captured, if that is not the whole screen */
+  /* what will actually be captured, if that is not the whole screen.
+     Corner marks only — dimming the rest ruins the picture you are framing. */
   function drawGuide(){
     if(recAspect==='screen') return;
     var SW2=stage.width, SH2=stage.height;
@@ -793,15 +794,30 @@
     if(SW2/SH2 > ar){ ch=SH2; cw=SH2*ar; } else { cw=SW2; ch=SW2/ar; }
     var x=(SW2-cw)/2, y=(SH2-ch)/2;
     if(cw>=SW2-1 && ch>=SH2-1) return;
+
+    var w=Math.max(2,Math.round(SW2/460));
+    var ins=w*1.5;
+    x+=ins; y+=ins; cw-=ins*2; ch-=ins*2;
+    var len=Math.round(Math.min(cw,ch)*0.055);
+
+    var corners=[[x,y,1,1],[x+cw,y,-1,1],[x,y+ch,1,-1],[x+cw,y+ch,-1,-1]];
+    var pass,i,c;
     ctx.save();
-    ctx.fillStyle='rgba(10,10,11,.58)';
-    ctx.fillRect(0,0,SW2,y);
-    ctx.fillRect(0,y+ch,SW2,SH2-(y+ch));
-    ctx.fillRect(0,y,x,ch);
-    ctx.fillRect(x+cw,y,SW2-(x+cw),ch);
-    ctx.strokeStyle='rgba(242,242,240,.4)';
-    ctx.lineWidth=Math.max(1,Math.round(SW2/700));
-    ctx.strokeRect(x,y,cw,ch);
+    ctx.lineCap='butt';
+    ctx.lineJoin='miter';
+    // dark underlay first, so the marks stay legible over any colour
+    for(pass=0;pass<2;pass++){
+      ctx.strokeStyle = pass ? 'rgba(255,255,255,.9)' : 'rgba(0,0,0,.4)';
+      ctx.lineWidth   = pass ? w : w*3;
+      ctx.beginPath();
+      for(i=0;i<4;i++){
+        c=corners[i];
+        ctx.moveTo(c[0]+c[2]*len, c[1]);
+        ctx.lineTo(c[0], c[1]);
+        ctx.lineTo(c[0], c[1]+c[3]*len);
+      }
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
