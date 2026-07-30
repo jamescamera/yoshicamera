@@ -280,7 +280,7 @@
       <button class="b" id="bClose">Close</button>
     </div>
   </div>
-  <p class="note">Dither is applied to the sort order, not the output — every colour is still used exactly once. Agitate raises it from banding-fix to full boil. The shutter develops a much larger frame — a second or two. Plate shows the palette alone, unrolled along the curve. Fidelity above zero blends back toward the true colour and breaks the once-each rule.</p>
+  <p class="note">Dither is applied to the sort order, not the output — every colour is still used exactly once. Agitate raises it from banding-fix to full boil. The frame button sets what the shutter and the recorder produce, and the dimmed area shows what gets cut. Turn the phone for a wide shot, or leave it upright and pick Wide 16:9. The shutter develops a much larger frame — a second or two. Plate shows the palette alone, unrolled along the curve. Fidelity above zero blends back toward the true colour and breaks the once-each rule.</p>
   <div class="credit">
     <a href="https://x.com/minted_i">By Yoshi Babaganoush</a>
     <a href="LICENSE">MIT</a>
@@ -782,6 +782,27 @@
     sctx.putImageData(outImg,0,0);
     ctx.imageSmoothingEnabled=false;
     ctx.drawImage(small,0,0,stage.width,stage.height);
+    drawGuide();
+  }
+
+  /* what will actually be captured, if that is not the whole screen */
+  function drawGuide(){
+    if(recAspect==='screen') return;
+    var SW2=stage.width, SH2=stage.height;
+    var ar=frameRatio(), cw, ch;
+    if(SW2/SH2 > ar){ ch=SH2; cw=SH2*ar; } else { cw=SW2; ch=SW2/ar; }
+    var x=(SW2-cw)/2, y=(SH2-ch)/2;
+    if(cw>=SW2-1 && ch>=SH2-1) return;
+    ctx.save();
+    ctx.fillStyle='rgba(10,10,11,.58)';
+    ctx.fillRect(0,0,SW2,y);
+    ctx.fillRect(0,y+ch,SW2,SH2-(y+ch));
+    ctx.fillRect(0,y,x,ch);
+    ctx.fillRect(x+cw,y,SW2-(x+cw),ch);
+    ctx.strokeStyle='rgba(242,242,240,.4)';
+    ctx.lineWidth=Math.max(1,Math.round(SW2/700));
+    ctx.strokeRect(x,y,cw,ch);
+    ctx.restore();
   }
 
   function tick(){
@@ -800,7 +821,7 @@
 
     setTimeout(function(){
       try{
-        var aspect=H/Math.max(W,1);
+        var aspect=1/frameRatio();
         var bw=Math.round(Math.min(1100, Math.max(400, opt.grain*5)));
         var bh=Math.round(bw*aspect);
         var n=bw*bh;
@@ -899,16 +920,20 @@
   });
 
   /* ---------- video ---------- */
+  /* width / height of the frame the shutter and the recorder will produce */
+  function frameRatio(){
+    if(recAspect==='reel')   return 9/16;
+    if(recAspect==='square') return 1;
+    if(recAspect==='wide')   return 16/9;
+    return (W&&H) ? (W/H) : (9/16);
+  }
+
   /* ---------- delivery canvas: even dimensions, capped, croppable ---------- */
   var recCan=document.createElement('canvas'), recCtx=recCan.getContext('2d');
   var recFmt='mp4', recAspect='reel';
 
   function setupRecCanvas(){
-    var ar;
-    if(recAspect==='reel') ar=9/16;
-    else if(recAspect==='square') ar=1;
-    else ar=(W&&H)?(W/H):(9/16);
-    var w,h;
+    var ar=frameRatio(), w, h;
     if(ar>=1){ w=1920; h=Math.round(w/ar); if(h>1080){ h=1080; w=Math.round(h*ar); } }
     else     { h=1920; w=Math.round(h*ar); if(w>1080){ w=1080; h=Math.round(w/ar); } }
     w=Math.max(2,Math.round(w/2)*2);
@@ -1026,8 +1051,14 @@
     this.className = (recFmt==='mp4') ? 'b on' : 'b';
   });
   document.getElementById('bAspect').addEventListener('click', function(){
-    recAspect = (recAspect==='reel') ? 'square' : (recAspect==='square' ? 'screen' : 'reel');
-    this.textContent = recAspect==='reel' ? 'Reel 9:16' : (recAspect==='square' ? 'Square 1:1' : 'Screen');
+    recAspect = (recAspect==='reel')   ? 'square'
+              : (recAspect==='square') ? 'wide'
+              : (recAspect==='wide')   ? 'screen'
+                                       : 'reel';
+    this.textContent = recAspect==='reel'   ? 'Reel 9:16'
+                     : recAspect==='square' ? 'Square 1:1'
+                     : recAspect==='wide'   ? 'Wide 16:9'
+                                            : 'Screen';
     setupRecCanvas();
   });
   document.getElementById('bClose').addEventListener('click', function(){ openSheet(false); });
@@ -1138,7 +1169,7 @@
 })();
 </script>
 <!-- GoatCounter: page views only. No cookies, no personal data, no camera data.
-     Replace YOURCODE with the site code you choose at goatcounter.com.
+     Dashboard: https://yoshicamera.goatcounter.com
      Delete these two lines to remove analytics entirely. -->
 <script data-goatcounter="https://yoshicamera.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
