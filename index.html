@@ -2990,7 +2990,7 @@
 
   /* ---------- video ---------- */
   var recorder=null, chunks=[], recording=false, recStart=0, micOn=false, micStream=null;
-  var recTrack=null, nextFrameAt=0;
+  var recTrack=null, nextFrameAt=0, pumpMode=true;
   var recBtn=document.getElementById('bRec');
   var recDot=document.getElementById('recDot');
   var recTime=document.getElementById('recTime');
@@ -3019,14 +3019,17 @@
     setupRecCanvas(); paintRec();
     if(!recCan.captureStream){ toast('This browser cannot record video'); return; }
     var s;
-    try { s=recCan.captureStream(0); } catch(e){
-      try { s=recCan.captureStream(30); } catch(e2){ toast('Capture failed'); return; }
+    recTrack=null;
+    if(pumpMode){
+      try { s=recCan.captureStream(0); } catch(e){ s=null; }
+      if(s){
+        recTrack=(s.getVideoTracks && s.getVideoTracks()[0]) || null;
+        if(recTrack && !recTrack.requestFrame) recTrack=null;
+        if(!recTrack){ try { s.getVideoTracks()[0].stop(); } catch(e){} s=null; }
+      }
     }
-    recTrack = (s.getVideoTracks && s.getVideoTracks()[0]) || null;
-    if(recTrack && !recTrack.requestFrame){ recTrack=null; }
-    if(!recTrack){
-      // this browser cannot be driven manually, so let it sample on its own
-      try { s.getVideoTracks()[0].stop(); } catch(e){}
+    if(!s){
+      // let the browser sample the canvas itself
       try { s=recCan.captureStream(30); } catch(e){ toast('Capture failed'); return; }
     }
     var withAudio=!!(micOn&&micStream);
@@ -3045,19 +3048,33 @@
     chunks=[];
     recorder.ondataavailable=function(ev){ if(ev.data&&ev.data.size) chunks.push(ev.data); };
     recorder.onstop=function(){
+      // a late ondataavailable is common on WebKit, so wait a beat before judging
+      setTimeout(finish, 260);
+    };
+    function finish(){
       var type=(recorder&&recorder.mimeType)?recorder.mimeType:(mime||'video/webm');
       var isMp4=type.indexOf('mp4')>-1;
       var blob=new Blob(chunks,{type:isMp4?'video/mp4':'video/webm'});
       chunks=[];
-      if(!blob.size){ toast('Nothing was captured — try again'); return; }
+      if(!blob.size){
+        if(pumpMode){
+          // the manual frame pump produced nothing here — stop using it
+          pumpMode=false;
+          toast('Recorder needs a different mode — press record again');
+        } else {
+          toast('Nothing was captured — try again');
+        }
+        return;
+      }
       var url=URL.createObjectURL(blob);
       saveUrl(url, CAMS[cur].id+'-'+Date.now()+'.'+(isMp4?'mp4':'webm'));
       setTimeout(function(){ URL.revokeObjectURL(url); },60000);
       toast(isMp4 ? (recCan.width+'×'+recCan.height+' mp4 · '+Math.round(blob.size/1048576*10)/10+' MB saved')
                   : ('webm · '+Math.round(blob.size/1048576*10)/10+' MB — this browser has no mp4 encoder'));
-    };
-    // no timeslice: one blob written in one go, so the header carries a duration
-    try { recorder.start(); }
+    }
+    // a timeslice guarantees data arrives while recording — without one, WebKit
+    // can fire onstop before the single data event and the clip comes back empty
+    try { recorder.start(500); }
     catch(e){ toast('Could not start recording'); return; }
     recording=true; recStart=now(); nextFrameAt=0;
     recBtn.className='on'; recDot.className='on'; recTime.textContent='0:00';
@@ -3066,7 +3083,6 @@
     if(!recording) return;
     recording=false; recTrack=null;
     recBtn.className=''; recDot.className='';
-    try { recorder.requestData(); } catch(e){}
     try { recorder.stop(); } catch(e){}
   }
   recBtn.addEventListener('click', function(){ if(recording) stopRec(); else startRec(); });
