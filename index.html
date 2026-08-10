@@ -572,7 +572,7 @@
 <div id="hud">
   <div class="stack">
     <p class="n" id="hName">—</p>
-    <p class="sub" id="hSub">swipe to change camera</p>
+    <p class="sub" id="hSub">swipe for a new experience</p>
   </div>
   <span id="recDot" role="status" aria-live="polite"><i></i><span id="recTime">0:00</span></span>
 </div>
@@ -637,7 +637,7 @@
   </div>
 </div>
 
-<div id="hint"><div class="harrow">&#8592;</div><div class="hlabel">Swipe to change camera</div><div class="harrow">&#8594;</div></div>
+<div id="hint"><div class="harrow">&#8592;</div><div class="hlabel">Swipe for a new experience</div><div class="harrow">&#8594;</div></div>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="gate">
@@ -817,17 +817,17 @@
       if(vidEl){
         try { vidEl.pause(); } catch(e){}
         try { vidEl.removeAttribute('src'); vidEl.load(); } catch(e){}
+        try { if(vidEl.parentNode) vidEl.parentNode.removeChild(vidEl); } catch(e){}
       }
+      vidEl=null;
       if(vidUrl){ try { URL.revokeObjectURL(vidUrl); } catch(e){} vidUrl=null; }
       vidStream=null;
     }
-    function ensureVidEl(){
-      if(vidEl) return vidEl;
-      vidEl=document.createElement('video');
-      vidEl.muted=true; vidEl.loop=true; vidEl.playsInline=true; vidEl.autoplay=true;
-      vidEl.style.cssText='position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
-      document.body.appendChild(vidEl);
-      return vidEl;
+    function newVidEl(){
+      var el=document.createElement('video');
+      el.muted=true; el.loop=true; el.playsInline=true; el.autoplay=true;
+      el.style.cssText='position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+      return el;
     }
     function fmtDuration(s){
       if(!isFinite(s) || s<0) return '';
@@ -835,16 +835,22 @@
       return m+':'+(r<10?'0':'')+r;
     }
     function takeVideo(file, fname, done, fail){
-      var el=ensureVidEl(), url=URL.createObjectURL(file), settled=false;
-      stopVideo();                  // release whatever was loaded before this
-      vidUrl=url;
+      /* build and load the replacement off to the side first — only once it
+         has proven it can actually decode a frame do we tear down whatever
+         source is currently live, so a bad file (unsupported codec, a hang)
+         never leaves the app stuck on a blank video with nothing to show */
+      var el=newVidEl(), url=URL.createObjectURL(file), settled=false, timer;
       function cleanup(){
+        clearTimeout(timer);
         el.removeEventListener('loadeddata', onReady);
         el.removeEventListener('error', onError);
       }
       function onReady(){
         if(settled || !el.videoWidth || !el.videoHeight) return;
         settled=true; cleanup();
+        stopVideo();                // now safe: the replacement is proven good
+        document.body.appendChild(el);
+        vidEl=el; vidUrl=url;
         master=null; kind='video';
         var dur=fmtDuration(el.duration);
         label=(fname||'video').replace(/\.[^.]+$/,'').slice(0,26)+' · '+
@@ -856,10 +862,13 @@
       function onError(){
         if(settled) return;
         settled=true; cleanup();
+        try { el.removeAttribute('src'); el.load(); } catch(e){}
+        try { URL.revokeObjectURL(url); } catch(e){}
         if(fail) fail('Could not open that video.');
       }
       el.addEventListener('loadeddata', onReady);
       el.addEventListener('error', onError);
+      timer=setTimeout(onError, 15000);
       el.src=url;
       el.load();
     }
@@ -1854,7 +1863,7 @@
 
   /* ---------------- JOINER — many lenses, many moments ---------------- */
   (function(){
-    var prints=[], srcC=null, grain=null, rr=0;
+    var prints=[], srcC=null, grain=null, rr=0, freshBuild=true;
     var WALLS=['#8E9A93','#B7AFA0','#2A2E31','#C6C9C4','#7C6F63'], wallIdx=0;
     var v={ layout:'grid', stock:'bleed', count:86, lens:100, hand:62, rate:34 };
 
@@ -1951,6 +1960,7 @@
       }
       prints.sort(function(a,b){ return a.z-b.z; });
       for(k=0;k<prints.length;k++){ prints[k].next=now()+Math.random()*prints[k].every; }
+      freshBuild=true;
     }
     reg({
       id:'joiner', name:'Joiner', line:'A composite camera',
@@ -1970,7 +1980,13 @@
         if(!grabInto(srcC, vw, Math.round(vw*0.75))) return;
         if(!held){
           var t=now(),i;
-          for(i=0;i<prints.length;i++) if(t>=prints[i].next){ shoot(prints[i]); prints[i].next=t+prints[i].every; }
+          // each print's first shot is scheduled at a random future moment,
+          // so a fresh build (a camera switch, or the full-resolution
+          // reinit before a shutter) leaves nearly all of them with nothing
+          // to draw yet — force everyone to fire once right away, then let
+          // the random schedule take over for the "refreshes over time" look
+          for(i=0;i<prints.length;i++) if(freshBuild || t>=prints[i].next){ shoot(prints[i]); prints[i].next=t+prints[i].every; }
+          freshBuild=false;
         }
         var SW=stage.width, SH=stage.height, kx=SW/W, ky=SH/H;
         var bleed=(v.stock==='bleed'), p,fw,fh,ox,oy,i2;
@@ -2821,7 +2837,7 @@
   (function(){
     var RING=26, ring=[], head=0, t=0, RW=0, RH=0;
     var cx=0.5, cy=0.5, tx=0.5, ty=0.5;   // the point it folds into
-    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:82, twist:0, delay:2, tint:22, ghost:0 };
+    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:65, twist:0, delay:2, tint:22, ghost:0 };
 
     function build(){
       RW=Math.max(2,Math.round(stage.width*0.5));
@@ -2836,14 +2852,15 @@
     }
     function drawBase(){
       var SW=stage.width, SH=stage.height;
-      if(!vid.videoWidth) return;
-      var vr=vid.videoWidth/vid.videoHeight, cr=SW/SH, dw, dh;
+      if(!srcReady()) return;
+      var vw=srcW(), vh=srcH();
+      var vr=vw/vh, cr=SW/SH, dw, dh;
       if(vr>cr){ dh=SH; dw=dh*vr; } else { dw=SW; dh=dw/vr; }
       ctx.save();
       ctx.setTransform(1,0,0,1,0,0);
       if(v.ghost) ctx.globalAlpha=0.35;
-      if(facing==='user'){ ctx.translate(SW,0); ctx.scale(-1,1); }
-      ctx.drawImage(vid,(SW-dw)/2,(SH-dh)/2,dw,dh);
+      if(srcMirror()){ ctx.translate(SW,0); ctx.scale(-1,1); }
+      ctx.drawImage(srcEl(),(SW-dw)/2,(SH-dh)/2,dw,dh);
       ctx.restore();
       ctx.globalAlpha=1;
     }
@@ -4886,7 +4903,7 @@
   /* --- new hybrids: Veil, Fresco, Vaporwave --- */
   (function(){
     var src=mk(), out=mk(), FW=128, FH=176, lastDraw=0;
-    var v={ dir:'vert', rep:32, flow:'drift', pal:'warning', bite:72, gap:28 };
+    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0 };
     function build(){
       var base=SLOW_DEVICE?(LOW_MEMORY?104:124):154;
       FW=Math.max(72,Math.min(190,Math.round(base)));
@@ -4919,7 +4936,7 @@
         lastDraw=stamp;
         if(!grabInto(src,FW,FH)) return;
         var img=src.x.getImageData(0,0,FW,FH), d=img.data;
-        var vert=v.dir==='vert', stripes=Math.max(6,v.rep|0), bandCells=7, gapCells=1+Math.round((v.gap/100)*5);
+        var vert=v.dir==='vert', stripes=Math.max(6,v.rep|0), bandCells=7, gapCells=Math.round((v.gap/100)*5);
         var ow=vert ? stripes*(bandCells+gapCells) : FW;
         var oh=!vert ? stripes*(bandCells+gapCells) : FH;
         if(out.c.width!==ow||out.c.height!==oh){ out.c.width=ow; out.c.height=oh; }
@@ -4977,7 +4994,11 @@
         out.x.putImageData(outImg,0,0);
         ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
         ctx.fillStyle=pal[0]; ctx.fillRect(0,0,stage.width,stage.height);
-        ctx.imageSmoothingEnabled=false;
+        /* blowing the tiny band buffer up with nearest-neighbour gave every
+           ink stroke hard square edges; smoothing it back out is what turns
+           those into soft, inky-looking bands instead of visible pixels */
+        ctx.imageSmoothingEnabled=true;
+        if('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality='high';
         ctx.drawImage(out.c,0,0,stage.width,stage.height);
         hSub.textContent=stripes+' ink bands · '+v.flow+' · '+v.pal+(SLOW_DEVICE?' · mobile safe':'');
       }
@@ -4987,7 +5008,7 @@
   (function(){
     var src=mk(), hist=[], head=0, count=0, FW=420, FH=320, lastDraw=0;
     var centreX=.5, centreY=.5, targetX=.5, targetY=.5;
-    var v={ dir:'down', smear:68, feed:72, rep:58, bleed:46, edge:62 };
+    var v={ dir:'down', smear:68, feed:72, rep:58, bleed:46, edge:0 };
     function build(){
       FW=SLOW_DEVICE?(LOW_MEMORY?280:340):Math.max(360,Math.min(620,Math.round(W*.70)));
       FH=Math.max(180,Math.round(FW*(H/Math.max(W,1))));
@@ -5804,6 +5825,211 @@
     }, 150);
   })();
 
+  /* ---------------- POLYGON — a low-poly console camera ----------------
+     Early 3D consoles had no subpixel precision and no perspective-correct
+     texturing: vertices snapped to a coarse fixed-point grid as they moved,
+     so polygons swam and their textures sheared instead of gliding smoothly,
+     over a colour-starved, dithered framebuffer. This rebuilds that from
+     the live picture rather than drawing it on top: the frame is quantised
+     to a handful of colours per channel with an ordered dither, then cut
+     into a mesh of quads that are each independently mis-snapped and
+     sheared, frame to frame. */
+  (function(){
+    var src=mk(), RW=72, RH=96, BAY4=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+    var v={ sky:'void', pixels:72, polys:22, wobble:55, depth:60, dither:45, fog:25 };
+    function build(){
+      RW=Math.max(24,Math.min(200,v.pixels|0));
+      RH=Math.max(18,Math.round(RW*(H/Math.max(W,1))));
+      src.c.width=RW; src.c.height=RH;
+    }
+    function skyColours(){
+      if(v.sky==='haze') return ['#6E7E92','110,124,143'];
+      if(v.sky==='dusk') return ['#33223F','176,120,150'];
+      return ['#05060A','36,40,54'];
+    }
+    reg({
+      id:'polygon', name:'Polygon', line:'A low-poly console camera',
+      note:'Vertex snap breaks the picture into quads that never quite line up with the last frame — Wobble sets how far. Colour depth and Dither rebuild an old console’s starved, patterned palette; Fog fades the top of the frame the way early hardware hid its draw distance.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'sky',label:'Fog colour',opts:[['void','Void'],['haze','Haze'],['dusk','Dusk']]},
+        {t:'sld',k:'pixels',label:'Texels',min:24,max:200,rebuild:true},
+        {t:'sld',k:'polys',label:'Polygons',min:6,max:36,rebuild:true},
+        {t:'sld',k:'wobble',label:'Wobble',min:0,max:100},
+        {t:'sld',k:'depth',label:'Colour depth',min:0,max:100},
+        {t:'sld',k:'dither',label:'Dither',min:0,max:100},
+        {t:'sld',k:'fog',label:'Fog',min:0,max:100}
+      ],
+      init:build, size:build,
+      frame:function(){
+        if(!grabInto(src,RW,RH)) return;
+        var img=src.x.getImageData(0,0,RW,RH), d=img.data;
+        var levels=Math.max(2,Math.round(2+(v.depth/100)*30)), step=255/(levels-1);
+        var da=v.dither/100, x,y,by,o,val,dith;
+        for(y=0;y<RH;y++){
+          by=(y&3)*4;
+          for(x=0;x<RW;x++){
+            o=(y*RW+x)*4;
+            dith=(BAY4[by+(x&3)]/16-0.5)*step*da;
+            val=d[o]+dith;   d[o]  =val<0?0:(val>255?255:Math.round(val/step)*step);
+            val=d[o+1]+dith; d[o+1]=val<0?0:(val>255?255:Math.round(val/step)*step);
+            val=d[o+2]+dith; d[o+2]=val<0?0:(val>255?255:Math.round(val/step)*step);
+          }
+        }
+        src.x.putImageData(img,0,0);
+
+        var SW=stage.width, SH=stage.height, sky=skyColours();
+        var cols=Math.max(4,v.polys|0), rows=Math.max(3,Math.round(cols*SH/SW));
+        var cw=SW/cols, ch=SH/rows, scx=RW/cols, scy=RH/rows;
+        var t=now()*0.0011, wob=v.wobble/100, j,i,h1,h2,jt,ox,oy,snap,shear;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        ctx.fillStyle=sky[0]; ctx.fillRect(0,0,SW,SH);
+        ctx.imageSmoothingEnabled=false;
+        for(j=0;j<rows;j++) for(i=0;i<cols;i++){
+          h1=hash2(i*7+1,j*3+2); h2=hash2(i*5+9,j*11+4);
+          jt=t*1.7+h1*41.0;
+          ox=Math.sin(jt+h2*6.283)*cw*0.16*wob;
+          oy=Math.cos(jt*0.8+h1*6.283)*ch*0.16*wob;
+          snap=Math.max(0.6,cw*0.13*wob);
+          ox=Math.round(ox/snap)*snap; oy=Math.round(oy/snap)*snap;
+          shear=(hash2(i*13+5,j*17+8)-0.5)*0.4*wob;
+          ctx.setTransform(1,shear,shear,1,i*cw+ox,j*ch+oy);
+          ctx.drawImage(src.c, i*scx, j*scy, scx+1, scy+1, 0,0, cw+1, ch+1);
+        }
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.imageSmoothingEnabled=true;
+        if(v.fog>0){
+          var g=ctx.createLinearGradient(0,0,0,SH);
+          g.addColorStop(0,'rgba('+sky[1]+','+(v.fog/100*0.85).toFixed(2)+')');
+          g.addColorStop(0.6,'rgba('+sky[1]+',0)');
+          ctx.fillStyle=g;
+          ctx.fillRect(0,0,SW,SH);
+        }
+        hSub.textContent=RW+'×'+RH+' texels · '+levels+'-level colour · '+cols+'×'+rows+' polys';
+      }
+    });
+  })();
+
+  /* ---------------- BOKEH — a bokeh-and-sparkle camera ----------------
+     Every pixel bright enough gets bloomed into a soft disc of its own
+     colour, with a thin sparkle cross on the sharpest highlights — string
+     lights and streetlamps turn into the out-of-focus orbs a fast lens
+     draws them as, against a softened, warmed picture behind them. */
+  (function(){
+    var src=mk(), RW=140, RH=180;
+    var v={ shape:'circle', threshold:55, size:45, sparkle:60, soft:55, density:45, warmth:40 };
+    function build(){
+      RW=SLOW_DEVICE?(LOW_MEMORY?96:120):160;
+      RH=Math.max(40,Math.round(RW*(H/Math.max(W,1))));
+      src.c.width=RW; src.c.height=RH;
+    }
+    reg({
+      id:'bokeh', name:'Bokeh', line:'A bokeh-and-sparkle camera',
+      note:'Threshold sets how bright a pixel has to be before it blooms into a disc of light; everything below it just stays part of the soft picture behind. Sparkle adds a thin cross of flare to the very brightest points, the way a fast lens draws a streetlamp.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'shape',label:'Shape',opts:[['circle','Circle'],['hex','Hexagon']]},
+        {t:'sld',k:'threshold',label:'Threshold',min:0,max:100},
+        {t:'sld',k:'size',label:'Bokeh size',min:0,max:100},
+        {t:'sld',k:'sparkle',label:'Sparkle',min:0,max:100},
+        {t:'sld',k:'soft',label:'Softness',min:0,max:100},
+        {t:'sld',k:'density',label:'Density',min:0,max:100},
+        {t:'sld',k:'warmth',label:'Warmth',min:0,max:100}
+      ],
+      init:build, size:build,
+      frame:function(){
+        if(!grabInto(src,RW,RH)) return;
+        var SW=stage.width, SH=stage.height;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        ctx.fillStyle='#05060A'; ctx.fillRect(0,0,SW,SH);
+
+        // the soft, slightly warmed picture everything else sits on top of
+        var blurPx=1+(v.soft/100)*Math.min(SW,SH)*0.035;
+        ctx.filter=('filter' in ctx)?('blur('+blurPx.toFixed(1)+'px) saturate(1.05) brightness(0.92)'):'none';
+        drawRaw(1);
+        ctx.filter='none';
+        if(v.warmth>0){
+          ctx.globalCompositeOperation='soft-light';
+          ctx.globalAlpha=(v.warmth/100)*0.35;
+          ctx.fillStyle='rgba(255,170,90,1)';
+          ctx.fillRect(0,0,SW,SH);
+          ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        }
+
+        // find the highlights worth blooming
+        var sd=src.x.getImageData(0,0,RW,RH).data;
+        var thresh=150+(v.threshold/100)*95;
+        var stride=Math.max(1,Math.round(1+(100-v.density)/100*5));
+        var maxPts=SLOW_DEVICE?70:160, maxCandidates=maxPts*4;
+        var pts=[], x,y,o,r,g,b,lum;
+        scan:
+        for(y=0;y<RH;y+=stride){
+          for(x=0;x<RW;x+=stride){
+            o=(y*RW+x)*4;
+            r=sd[o]; g=sd[o+1]; b=sd[o+2];
+            lum=.2126*r+.7152*g+.0722*b;
+            if(lum>=thresh){
+              pts.push({x:x/RW,y:y/RH,lum:lum,r:r,g:g,b:b});
+              if(pts.length>=maxCandidates) break scan;
+            }
+          }
+        }
+        if(pts.length>maxPts){
+          pts.sort(function(a,b2){ return b2.lum-a.lum; });
+          pts.length=maxPts;
+        }
+
+        // bloom each one into a soft, warmed disc
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='screen';
+        var sizeBase=Math.min(SW,SH)*(0.02+(v.size/100)*0.09), warm=v.warmth/100;
+        var i,p,px,py,excess,rad,rr,gg,bb,grad,k,ang,hx,hy;
+        for(i=0;i<pts.length;i++){
+          p=pts[i]; px=p.x*SW; py=p.y*SH;
+          excess=clamp((p.lum-thresh)/(255-thresh),0,1);
+          rad=sizeBase*(0.5+excess*1.3);
+          rr=Math.min(255,p.r+warm*40); gg=Math.min(255,p.g+warm*18); bb=Math.max(0,p.b-warm*30);
+          grad=ctx.createRadialGradient(px,py,0,px,py,rad);
+          grad.addColorStop(0,'rgba('+rr+','+gg+','+bb+','+(0.55+excess*0.35).toFixed(2)+')');
+          grad.addColorStop(0.5,'rgba('+rr+','+gg+','+bb+','+(0.22*excess).toFixed(2)+')');
+          grad.addColorStop(1,'rgba('+rr+','+gg+','+bb+',0)');
+          ctx.fillStyle=grad;
+          ctx.beginPath();
+          if(v.shape==='hex'){
+            for(k=0;k<6;k++){
+              ang=k*Math.PI/3-Math.PI/6;
+              hx=px+Math.cos(ang)*rad; hy=py+Math.sin(ang)*rad;
+              if(k===0) ctx.moveTo(hx,hy); else ctx.lineTo(hx,hy);
+            }
+            ctx.closePath();
+          } else ctx.arc(px,py,rad,0,Math.PI*2);
+          ctx.fill();
+
+          if(v.sparkle>0 && excess>0.55){
+            var flareLen=rad*(1.6+(v.sparkle/100)*2.2);
+            var sAlpha=(excess-0.55)/0.45*(v.sparkle/100)*0.85;
+            ctx.strokeStyle='rgba(255,255,255,'+sAlpha.toFixed(2)+')';
+            ctx.lineWidth=Math.max(0.6,rad*0.06);
+            ctx.beginPath(); ctx.moveTo(px-flareLen,py); ctx.lineTo(px+flareLen,py);
+            ctx.moveTo(px,py-flareLen); ctx.lineTo(px,py+flareLen);
+            ctx.stroke();
+            var d2=flareLen*0.62;
+            ctx.strokeStyle='rgba(255,255,255,'+(sAlpha*0.6).toFixed(2)+')';
+            ctx.lineWidth=Math.max(0.4,rad*0.03);
+            ctx.beginPath();
+            ctx.moveTo(px-d2,py-d2); ctx.lineTo(px+d2,py+d2);
+            ctx.moveTo(px-d2,py+d2); ctx.lineTo(px+d2,py-d2);
+            ctx.stroke();
+          }
+        }
+        ctx.globalCompositeOperation='source-over';
+        hSub.textContent=pts.length+' bokeh points · '+(v.shape==='hex'?'hexagon':'circle');
+      }
+    });
+  })();
+
   (function(){
     function moveTo(id,to){
       var k=-1;
@@ -5835,7 +6061,8 @@
     shatter:['255,100,72','#100807'], goober:['229,72,77','#0C0D10'],
     vhs:['255,74,52','#07070A'], potato:['144,198,80','#10100B'], ribbon:['120,214,255','#060A0E'], psyche:['255,92,122','#0B0613'], warhol:['255,98,110','#F0E6D1'], liquid:['83,220,208','#070817'], chroma:['166,112,255','#070813'],
     newsprint:['58,44,34','#F2ECD9'], lyrics:['138,118,255','#090813'], ascii:['123,255,166','#08100A'], emoji:['255,208,78','#0A0B10'], lifeform:['111,255,176','#06080D'], onebit:['238,236,229','#0B0B0D'],
-    veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807']
+    veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
+    polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){
@@ -7315,9 +7542,21 @@
     if(rafHandle){ caf(rafHandle); rafHandle=0; }
     setTimeout(function(){
       var grown=false, i, k;
+      /* setStageSize only touches stage.width/height — it never updates the
+         page-level W/H that many cameras' own build() reads to lay out their
+         internal geometry (grid counts, buffer sizes, absolute positions),
+         on the assumption those always track the canvas. Developing at a
+         file's full resolution, which can dwarf the live preview's viewport,
+         breaks that assumption: the geometry gets built for a small canvas
+         and then drawn onto a much bigger one, leaving most of it blank.
+         Scaling W/H by the same factor the stage itself is about to grow by
+         keeps that assumption true without needing to touch every camera. */
+      var oldW=W, oldH=H;
       try {
+        var scaleX=sw?PHOTO.w()/sw:1, scaleY=sh?PHOTO.h()/sh:1;
         setStageSize(PHOTO.w(), PHOTO.h());
         grown=true;
+        W=Math.round(oldW*scaleX); H=Math.round(oldH*scaleY);
         camReady={}; c.init();
         k=warmFrames(c.id);
         for(i=0;i<k;i++) c.frame();
@@ -7326,12 +7565,12 @@
       } catch(e){
         toast('Not enough memory at full size — saving the preview instead');
         try {
-          if(grown){ setStageSize(sw,sh); grown=false; camReady={}; c.init(); c.frame(); }
+          if(grown){ setStageSize(sw,sh); grown=false; W=oldW; H=oldH; camReady={}; c.init(); c.frame(); }
           shotNow();
         } catch(e2){}
       }
       try {
-        if(grown){ setStageSize(sw,sh); camReady={}; c.init(); }
+        if(grown){ setStageSize(sw,sh); W=oldW; H=oldH; camReady={}; c.init(); }
       } catch(e3){}
       btn.className='';
       developing=false;
@@ -8075,7 +8314,7 @@
       bPhoto.textContent = on ? (PHOTO.kind()==='video' ? 'Change video' : 'Change photo') : 'Use a photo or video';
       bPhoto.className   = on ? 'b on' : 'b';
       bLive.style.display = on ? '' : 'none';
-      hSub.textContent = on ? PHOTO.label() : 'swipe to change camera';
+      hSub.textContent = on ? PHOTO.label() : 'swipe for a new experience';
       syncVidUI();
     }
 
@@ -8203,7 +8442,7 @@
   (function(){
     var g=document.getElementById('gateLine');
     if(g) g.textContent = CAMS.length + ' cameras that refuse to behave, on one shutter. ' +
-      'Swipe the picture to change instrument.';
+      'Swipe for a new experience.';
   })();
 
   document.addEventListener('visibilitychange', function(){
