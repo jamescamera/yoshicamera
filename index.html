@@ -621,9 +621,14 @@
       <button class="b" id="bGif">GIF size</button>
       <button class="b" id="bPhoto">Use a photo or video</button>
       <button class="b" id="bLive" style="display:none">Back to the lens</button>
+      <button class="b" id="bVidPlay" style="display:none">Pause video</button>
       <button class="b" id="bLook">Look</button>
       <button class="b" id="bClose">Close</button>
     </div>
+  </div>
+  <div class="field" id="vidScrubField" style="display:none">
+    <label>Video position <b id="vidScrubVal">0:00 / 0:00</b></label>
+    <input type="range" id="vidScrub" min="0" max="1000" value="0" step="1">
   </div>
   <p class="note" id="camNote"></p>
   <div class="credit">
@@ -862,6 +867,7 @@
       on:function(){ return !!master || kind==='video'; },
       kind:function(){ return kind; },
       el:function(){ return kind==='video' ? vidEl : (master ? master.c : null); },
+      videoEl:function(){ return kind==='video' ? vidEl : null; },
       w:function(){ return kind==='video' ? (vidEl?vidEl.videoWidth:0) : (master ? master.c.width : 0); },
       h:function(){ return kind==='video' ? (vidEl?vidEl.videoHeight:0) : (master ? master.c.height : 0); },
       cap:cap,
@@ -8058,6 +8064,11 @@
     var bPhoto=document.getElementById('bPhoto');
     var bLive=document.getElementById('bLive');
     var bGate=document.getElementById('bGatePhoto');
+    var bVidPlay=document.getElementById('bVidPlay');
+    var vidScrubField=document.getElementById('vidScrubField');
+    var vidScrub=document.getElementById('vidScrub');
+    var vidScrubVal=document.getElementById('vidScrubVal');
+    var scrubbing=false;
 
     function syncUI(){
       var on=PHOTO.on();
@@ -8065,7 +8076,51 @@
       bPhoto.className   = on ? 'b on' : 'b';
       bLive.style.display = on ? '' : 'none';
       hSub.textContent = on ? PHOTO.label() : 'swipe to change camera';
+      syncVidUI();
     }
+
+    function fmtT(s){
+      if(!isFinite(s) || s<0) return '0:00';
+      var m=Math.floor(s/60), r=Math.floor(s%60);
+      return m+':'+(r<10?'0':'')+r;
+    }
+    /* the scrub bar and play/pause only ever apply to a loaded video — a
+       loaded photo or the live lens have nothing here to control */
+    function syncVidUI(){
+      var v=PHOTO.videoEl();
+      bVidPlay.style.display = v ? '' : 'none';
+      vidScrubField.style.display = v ? '' : 'none';
+      if(!v) return;
+      bVidPlay.textContent = v.paused ? 'Play video' : 'Pause video';
+      bVidPlay.className = v.paused ? 'b on' : 'b';
+      if(!scrubbing && isFinite(v.duration) && v.duration>0){
+        vidScrub.value = Math.round((v.currentTime/v.duration)*1000);
+      }
+      vidScrubVal.textContent = fmtT(v.currentTime)+' / '+fmtT(v.duration);
+    }
+    bVidPlay.addEventListener('click', function(){
+      var v=PHOTO.videoEl();
+      if(!v) return;
+      if(v.paused){ var p=v.play(); if(p && p['catch']) p['catch'](function(){}); } else v.pause();
+      syncVidUI();
+    });
+    function scrubStart(){
+      var v=PHOTO.videoEl();
+      if(!v) return;
+      scrubbing=true;
+      if(!v.paused) v.pause();   // dragging a moving target is no fun
+      peek(true);
+    }
+    vidScrub.addEventListener('touchstart', scrubStart, false);
+    vidScrub.addEventListener('mousedown', scrubStart, false);
+    vidScrub.addEventListener('input', function(){
+      var v=PHOTO.videoEl();
+      if(!v || !isFinite(v.duration) || v.duration<=0) return;
+      v.currentTime=(vidScrub.value/1000)*v.duration;
+      vidScrubVal.textContent=fmtT(v.currentTime)+' / '+fmtT(v.duration);
+    });
+    vidScrub.addEventListener('change', function(){ scrubbing=false; });
+    setInterval(syncVidUI, 400);
 
     function enter(){
       hideHint();
