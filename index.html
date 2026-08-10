@@ -6045,10 +6045,10 @@
     order.forEach(function(id,ix){ moveTo(id,ix); });
   })();
 
-  /* Switched off everywhere, on purpose — these eight did not work well enough
+  /* Switched off everywhere, on purpose — these did not work well enough
      to keep. Their code is still in the file; take an id out of this list to try
      one again. */
-  var OFF=['chroma','newsprint','lyrics','riptide','psyche','warhol','liquid','emoji','current'];
+  var OFF=['chroma','newsprint','lyrics','riptide','psyche','warhol','liquid','emoji','current','polygon'];
   CAMS = CAMS.filter(function(c){ return OFF.indexOf(c.id)<0; });
 
   var cur=0, camReady={};
