@@ -817,17 +817,17 @@
       if(vidEl){
         try { vidEl.pause(); } catch(e){}
         try { vidEl.removeAttribute('src'); vidEl.load(); } catch(e){}
+        try { if(vidEl.parentNode) vidEl.parentNode.removeChild(vidEl); } catch(e){}
       }
+      vidEl=null;
       if(vidUrl){ try { URL.revokeObjectURL(vidUrl); } catch(e){} vidUrl=null; }
       vidStream=null;
     }
-    function ensureVidEl(){
-      if(vidEl) return vidEl;
-      vidEl=document.createElement('video');
-      vidEl.muted=true; vidEl.loop=true; vidEl.playsInline=true; vidEl.autoplay=true;
-      vidEl.style.cssText='position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
-      document.body.appendChild(vidEl);
-      return vidEl;
+    function newVidEl(){
+      var el=document.createElement('video');
+      el.muted=true; el.loop=true; el.playsInline=true; el.autoplay=true;
+      el.style.cssText='position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+      return el;
     }
     function fmtDuration(s){
       if(!isFinite(s) || s<0) return '';
@@ -835,16 +835,22 @@
       return m+':'+(r<10?'0':'')+r;
     }
     function takeVideo(file, fname, done, fail){
-      var el=ensureVidEl(), url=URL.createObjectURL(file), settled=false;
-      stopVideo();                  // release whatever was loaded before this
-      vidUrl=url;
+      /* build and load the replacement off to the side first — only once it
+         has proven it can actually decode a frame do we tear down whatever
+         source is currently live, so a bad file (unsupported codec, a hang)
+         never leaves the app stuck on a blank video with nothing to show */
+      var el=newVidEl(), url=URL.createObjectURL(file), settled=false, timer;
       function cleanup(){
+        clearTimeout(timer);
         el.removeEventListener('loadeddata', onReady);
         el.removeEventListener('error', onError);
       }
       function onReady(){
         if(settled || !el.videoWidth || !el.videoHeight) return;
         settled=true; cleanup();
+        stopVideo();                // now safe: the replacement is proven good
+        document.body.appendChild(el);
+        vidEl=el; vidUrl=url;
         master=null; kind='video';
         var dur=fmtDuration(el.duration);
         label=(fname||'video').replace(/\.[^.]+$/,'').slice(0,26)+' · '+
@@ -856,10 +862,13 @@
       function onError(){
         if(settled) return;
         settled=true; cleanup();
+        try { el.removeAttribute('src'); el.load(); } catch(e){}
+        try { URL.revokeObjectURL(url); } catch(e){}
         if(fail) fail('Could not open that video.');
       }
       el.addEventListener('loadeddata', onReady);
       el.addEventListener('error', onError);
+      timer=setTimeout(onError, 15000);
       el.src=url;
       el.load();
     }
@@ -1854,7 +1863,7 @@
 
   /* ---------------- JOINER — many lenses, many moments ---------------- */
   (function(){
-    var prints=[], srcC=null, grain=null, rr=0;
+    var prints=[], srcC=null, grain=null, rr=0, freshBuild=true;
     var WALLS=['#8E9A93','#B7AFA0','#2A2E31','#C6C9C4','#7C6F63'], wallIdx=0;
     var v={ layout:'grid', stock:'bleed', count:86, lens:100, hand:62, rate:34 };
 
@@ -1951,6 +1960,7 @@
       }
       prints.sort(function(a,b){ return a.z-b.z; });
       for(k=0;k<prints.length;k++){ prints[k].next=now()+Math.random()*prints[k].every; }
+      freshBuild=true;
     }
     reg({
       id:'joiner', name:'Joiner', line:'A composite camera',
@@ -1970,7 +1980,13 @@
         if(!grabInto(srcC, vw, Math.round(vw*0.75))) return;
         if(!held){
           var t=now(),i;
-          for(i=0;i<prints.length;i++) if(t>=prints[i].next){ shoot(prints[i]); prints[i].next=t+prints[i].every; }
+          // each print's first shot is scheduled at a random future moment,
+          // so a fresh build (a camera switch, or the full-resolution
+          // reinit before a shutter) leaves nearly all of them with nothing
+          // to draw yet — force everyone to fire once right away, then let
+          // the random schedule take over for the "refreshes over time" look
+          for(i=0;i<prints.length;i++) if(freshBuild || t>=prints[i].next){ shoot(prints[i]); prints[i].next=t+prints[i].every; }
+          freshBuild=false;
         }
         var SW=stage.width, SH=stage.height, kx=SW/W, ky=SH/H;
         var bleed=(v.stock==='bleed'), p,fw,fh,ox,oy,i2;
@@ -7315,9 +7331,21 @@
     if(rafHandle){ caf(rafHandle); rafHandle=0; }
     setTimeout(function(){
       var grown=false, i, k;
+      /* setStageSize only touches stage.width/height — it never updates the
+         page-level W/H that many cameras' own build() reads to lay out their
+         internal geometry (grid counts, buffer sizes, absolute positions),
+         on the assumption those always track the canvas. Developing at a
+         file's full resolution, which can dwarf the live preview's viewport,
+         breaks that assumption: the geometry gets built for a small canvas
+         and then drawn onto a much bigger one, leaving most of it blank.
+         Scaling W/H by the same factor the stage itself is about to grow by
+         keeps that assumption true without needing to touch every camera. */
+      var oldW=W, oldH=H;
       try {
+        var scaleX=sw?PHOTO.w()/sw:1, scaleY=sh?PHOTO.h()/sh:1;
         setStageSize(PHOTO.w(), PHOTO.h());
         grown=true;
+        W=Math.round(oldW*scaleX); H=Math.round(oldH*scaleY);
         camReady={}; c.init();
         k=warmFrames(c.id);
         for(i=0;i<k;i++) c.frame();
@@ -7326,12 +7354,12 @@
       } catch(e){
         toast('Not enough memory at full size — saving the preview instead');
         try {
-          if(grown){ setStageSize(sw,sh); grown=false; camReady={}; c.init(); c.frame(); }
+          if(grown){ setStageSize(sw,sh); grown=false; W=oldW; H=oldH; camReady={}; c.init(); c.frame(); }
           shotNow();
         } catch(e2){}
       }
       try {
-        if(grown){ setStageSize(sw,sh); camReady={}; c.init(); }
+        if(grown){ setStageSize(sw,sh); W=oldW; H=oldH; camReady={}; c.init(); }
       } catch(e3){}
       btn.className='';
       developing=false;
