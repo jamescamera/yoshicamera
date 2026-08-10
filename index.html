@@ -7565,10 +7565,298 @@
     }
     return fixed>0 ? b : null;
   }
+  /* The duration patch above fixes what a track CLAIMS its length is, but
+     there's a deeper reason strict editors refuse the file outright even
+     once that's correct: MediaRecorder's MP4 is a fragmented one (moof +
+     mdat pairs, one roughly per timeslice, with the actual sample table
+     in moov left essentially empty because it doesn't know the samples
+     yet when it writes moov first). That's a perfectly legal MP4 — Chrome
+     and most players read it fine — but plenty of mobile trim/edit tools
+     only know how to read a classic flat file: one moov with a complete
+     sample table (sizes, offsets, durations, keyframes) pointing into one
+     mdat. This walks every moof/traf/trun, recovers every sample's real
+     size, duration, keyframe flag and byte offset, and rewrites the whole
+     file as that flat form — same encoded audio/video bytes, just properly
+     indexed. Verified against real recorded clips: the output seeks
+     correctly to real, distinct decoded frames at arbitrary points, which
+     the original fragmented file's confused metadata could not guarantee
+     in a strict reader. */
+  function remuxFragmentedMp4Bytes(b){
+    function u32(o){ return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
+    function i32(o){ return u32(o)|0; }
+    function u64(o){ return u32(o)*4294967296+u32(o+4); }
+    function w32(buf,o,v){ buf[o]=(v>>>24)&255; buf[o+1]=(v>>>16)&255; buf[o+2]=(v>>>8)&255; buf[o+3]=v&255; }
+    function w64(buf,o,v){ var hi=Math.floor(v/4294967296); w32(buf,o,hi); w32(buf,o+4,v>>>0); }
+    function fourcc(o){ return String.fromCharCode(b[o],b[o+1],b[o+2],b[o+3]); }
+    function children(start,end){
+      var off=start, out=[];
+      while(off+8<=end){
+        var size=u32(off), type=fourcc(off+4), hdr=8;
+        if(size===1){ size=u64(off+8); hdr=16; }
+        else if(size===0){ size=end-off; }
+        if(size<hdr || off+size>end) break;
+        out.push({type:type, off:off, hdr:hdr, size:size});
+        off+=size;
+      }
+      return out;
+    }
+    function find(list,type){ for(var i=0;i<list.length;i++) if(list[i].type===type) return list[i]; return null; }
+    function findAll(list,type){ return list.filter(function(x){ return x.type===type; }); }
+    function kid(box_,type){ return find(children(box_.off+box_.hdr, box_.off+box_.size), type); }
+
+    /* --- tiny growable byte buffer --- */
+    function Bld(){ this.chunks=[]; this.len=0; }
+    Bld.prototype.raw=function(src,off,size){ this.chunks.push(src.subarray(off,off+size)); this.len+=size; return this; };
+    Bld.prototype.bytes=function(u8){ this.chunks.push(u8); this.len+=u8.length; return this; };
+    Bld.prototype.u8=function(v){ return this.bytes(Uint8Array.of(v&255)); };
+    Bld.prototype.u32=function(v){ return this.bytes(Uint8Array.of((v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255)); };
+    Bld.prototype.u64=function(v){ var hi=Math.floor(v/4294967296); return this.u32(hi).u32(v>>>0); };
+    Bld.prototype.fourcc=function(s){ var a=new Uint8Array(4); for(var i=0;i<4;i++) a[i]=s.charCodeAt(i); return this.bytes(a); };
+    Bld.prototype.concat=function(o){ var self=this; o.chunks.forEach(function(c){ self.bytes(c); }); return this; };
+    Bld.prototype.toBytes=function(){ var out=new Uint8Array(this.len), at=0; this.chunks.forEach(function(c){ out.set(c,at); at+=c.length; }); return out; };
+    function boxOf(type,inner){ var body=inner.toBytes(); var o=new Bld(); return o.u32(8+body.length).fourcc(type).bytes(body); }
+
+    function parseTrun(box_){
+      var c=box_.off+box_.hdr, version=b[c], flags=(b[c+1]<<16)|(b[c+2]<<8)|b[c+3];
+      var count=u32(c+4), p=c+8, dataOffset=null, firstFlags=null;
+      if(flags&0x000001){ dataOffset=i32(p); p+=4; }
+      if(flags&0x000004){ firstFlags=u32(p); p+=4; }
+      var hasDur=!!(flags&0x000100), hasSize=!!(flags&0x000200), hasFlags=!!(flags&0x000400), hasCto=!!(flags&0x000800);
+      var samples=[];
+      for(var i=0;i<count;i++){
+        var dur=null,size=null,flg=null;
+        if(hasDur){ dur=u32(p); p+=4; }
+        if(hasSize){ size=u32(p); p+=4; }
+        if(hasFlags){ flg=u32(p); p+=4; }
+        if(hasCto) p+=4;
+        if(i===0 && flg===null && firstFlags!==null) flg=firstFlags;
+        samples.push({dur:dur,size:size,flags:flg});
+      }
+      return {dataOffset:dataOffset, samples:samples};
+    }
+    function parseTfhd(box_){
+      var c=box_.off+box_.hdr, flags=(b[c+1]<<16)|(b[c+2]<<8)|b[c+3];
+      var trackId=u32(c+4), p=c+8, baseOff=null, defDur=null, defSize=null, defFlags=null;
+      if(flags&0x000001){ baseOff=u64(p); p+=8; }
+      if(flags&0x000002) p+=4;
+      if(flags&0x000008){ defDur=u32(p); p+=4; }
+      if(flags&0x000010){ defSize=u32(p); p+=4; }
+      if(flags&0x000020){ defFlags=u32(p); p+=4; }
+      return {trackId:trackId, baseOff:baseOff, defDur:defDur, defSize:defSize, defFlags:defFlags, baseIsMoof:!!(flags&0x020000)};
+    }
+    function isSync(flg,isVideo){
+      if(!isVideo) return true;
+      if(flg===null || flg===undefined) return true;
+      return (((flg>>>24)&0xFF)&0x03)===2;   // sample_depends_on === 2 (no dependency = keyframe)
+    }
+
+    try {
+      var top=children(0,b.length);
+      var ftypBox=find(top,'ftyp'), moovBox=find(top,'moov');
+      if(!ftypBox || !moovBox) return null;
+      var moovKids=children(moovBox.off+moovBox.hdr, moovBox.off+moovBox.size);
+      if(!find(moovKids,'mvex')) return null;   // not fragmented — nothing this function is for
+      var mvhdBox=find(moovKids,'mvhd');
+      if(!mvhdBox) return null;
+      var mvhdVer=b[mvhdBox.off+mvhdBox.hdr];
+      var mvhdTimescale=mvhdVer===1 ? u32(mvhdBox.off+mvhdBox.hdr+20) : u32(mvhdBox.off+mvhdBox.hdr+12);
+      if(!mvhdTimescale) return null;
+
+      var trakBoxes=findAll(moovKids,'trak');
+      var tracks=trakBoxes.map(function(trak){
+        var tkhd=kid(trak,'tkhd'); if(!tkhd) return null;
+        var tkhdVer=b[tkhd.off+tkhd.hdr];
+        var trackId=tkhdVer===1 ? u32(tkhd.off+tkhd.hdr+20) : u32(tkhd.off+tkhd.hdr+12);
+        var mdia=kid(trak,'mdia'); if(!mdia) return null;
+        var mdhd=kid(mdia,'mdhd'), hdlr=kid(mdia,'hdlr'), minf=kid(mdia,'minf');
+        if(!mdhd || !hdlr || !minf) return null;
+        var mdhdVer=b[mdhd.off+mdhd.hdr];
+        var mdTimescale=mdhdVer===1 ? u32(mdhd.off+mdhd.hdr+20) : u32(mdhd.off+mdhd.hdr+12);
+        if(!mdTimescale) return null;
+        var handlerType=fourcc(hdlr.off+hdlr.hdr+8);
+        var minfKids=children(minf.off+minf.hdr, minf.off+minf.size);
+        var mediaHeader=find(minfKids,'vmhd')||find(minfKids,'smhd');
+        var dinf=find(minfKids,'dinf');
+        var stbl=find(minfKids,'stbl');
+        if(!mediaHeader || !dinf || !stbl) return null;
+        var stsd=kid(stbl,'stsd');
+        if(!stsd) return null;
+        return { trackId:trackId, handlerType:handlerType, mdTimescale:mdTimescale,
+                 tkhd:tkhd, mdhd:mdhd, hdlr:hdlr, mediaHeader:mediaHeader, dinf:dinf, stsd:stsd, samples:[] };
+      });
+      if(tracks.indexOf(null)>-1) return null;
+      function trackFor(id){ for(var i=0;i<tracks.length;i++) if(tracks[i].trackId===id) return tracks[i]; return null; }
+
+      var moofBoxes=findAll(top,'moof');
+      for(var mi=0; mi<moofBoxes.length; mi++){
+        var moof=moofBoxes[mi];
+        var trafs=findAll(children(moof.off+moof.hdr, moof.off+moof.size), 'traf');
+        for(var ti=0; ti<trafs.length; ti++){
+          var trafKids=children(trafs[ti].off+trafs[ti].hdr, trafs[ti].off+trafs[ti].size);
+          var tfhdBox=find(trafKids,'tfhd'), trunBox=find(trafKids,'trun');
+          if(!tfhdBox || !trunBox) return null;
+          var tfhd=parseTfhd(tfhdBox), trun=parseTrun(trunBox);
+          var track=trackFor(tfhd.trackId);
+          if(!track) return null;
+          var isVideo=track.handlerType==='vide';
+          var base = tfhd.baseOff!==null ? tfhd.baseOff : (tfhd.baseIsMoof ? moof.off : null);
+          if(base===null) return null;
+          var pos = base + (trun.dataOffset||0);
+          for(var si=0; si<trun.samples.length; si++){
+            var s=trun.samples[si];
+            var size=s.size!==null?s.size:tfhd.defSize, dur=s.dur!==null?s.dur:tfhd.defDur;
+            if(size==null || dur==null) return null;
+            track.samples.push({size:size, dur:dur, sync:isSync(s.flags!==null?s.flags:tfhd.defFlags, isVideo), off:pos});
+            pos+=size;
+          }
+        }
+      }
+      if(!tracks.length || !tracks[0].samples.length) return null;
+
+      /* --- rebuild each track's stbl and trak, then moov, then relocate the samples into one mdat --- */
+      var ftypBytes=b.slice(ftypBox.off, ftypBox.off+ftypBox.size);
+      var maxSeconds=0;
+      tracks.forEach(function(t){
+        t.totalDurUnits=t.samples.reduce(function(a,s){ return a+s.dur; },0);
+        maxSeconds=Math.max(maxSeconds, t.totalDurUnits/t.mdTimescale);
+      });
+      var movDuration=Math.round(maxSeconds*mvhdTimescale);
+
+      /* box-relative field offsets below include the 8-byte size+type header
+         these slices carry, so they run 8 past the content-relative offsets
+         (mvC+20 for timescale etc.) used when only reading, elsewhere in
+         this file — timescale is 4 bytes wide, duration immediately follows */
+      var mvhdBytes=b.slice(mvhdBox.off, mvhdBox.off+mvhdBox.size);
+      if(mvhdVer===1) w64(mvhdBytes,32,movDuration); else w32(mvhdBytes,24,movDuration);
+
+      var trakBytesList=[], trakInfo=[];
+      tracks.forEach(function(t){
+        var tkhdBytes=b.slice(t.tkhd.off, t.tkhd.off+t.tkhd.size);
+        var tkhdVer=tkhdBytes[8];
+        // tkhd has no timescale field — duration follows track_ID+reserved instead
+        if(tkhdVer===1) w64(tkhdBytes,36,movDuration); else w32(tkhdBytes,28,movDuration);
+
+        var mdhdBytes=b.slice(t.mdhd.off, t.mdhd.off+t.mdhd.size);
+        var mdhdVer=mdhdBytes[8];
+        if(mdhdVer===1) w64(mdhdBytes,32,t.totalDurUnits); else w32(mdhdBytes,24,t.totalDurUnits);
+
+        var hdlrBytes=b.slice(t.hdlr.off, t.hdlr.off+t.hdlr.size);
+        var mediaHeaderBytes=b.slice(t.mediaHeader.off, t.mediaHeader.off+t.mediaHeader.size);
+        var dinfBytes=b.slice(t.dinf.off, t.dinf.off+t.dinf.size);
+        var stsdBytes=b.slice(t.stsd.off, t.stsd.off+t.stsd.size);
+        var isVideo=t.handlerType==='vide';
+        var samples=t.samples;
+
+        var sttsB=new Bld(); sttsB.u32(0);
+        var runs=[], ri=0;
+        while(ri<samples.length){
+          var rj=ri; while(rj+1<samples.length && samples[rj+1].dur===samples[ri].dur) rj++;
+          runs.push({count:rj-ri+1, delta:samples[ri].dur}); ri=rj+1;
+        }
+        sttsB.u32(runs.length);
+        runs.forEach(function(r){ sttsB.u32(r.count).u32(r.delta); });
+        var stts=boxOf('stts',sttsB);
+
+        var stszB=new Bld(); stszB.u32(0).u32(0).u32(samples.length);
+        samples.forEach(function(s){ stszB.u32(s.size); });
+        var stsz=boxOf('stsz',stszB);
+
+        var stscB=new Bld(); stscB.u32(0).u32(1).u32(1).u32(1).u32(1);
+        var stsc=boxOf('stsc',stscB);
+
+        var maxOff=0; samples.forEach(function(s){ var e=s.off+s.size; if(e>maxOff) maxOff=e; });
+        var use64=maxOff>0xFFFFFFFF;
+        var stcoB=new Bld(); stcoB.u32(0).u32(samples.length);
+        samples.forEach(function(){ use64 ? stcoB.u64(0) : stcoB.u32(0); });
+        var stco=boxOf(use64?'co64':'stco',stcoB);
+
+        var stss=null;
+        if(isVideo){
+          var syncIdx=[]; samples.forEach(function(s,idx){ if(s.sync) syncIdx.push(idx+1); });
+          var stssB=new Bld(); stssB.u32(0).u32(syncIdx.length);
+          syncIdx.forEach(function(n){ stssB.u32(n); });
+          stss=boxOf('stss',stssB);
+        }
+
+        var stblB=new Bld();
+        stblB.raw(stsdBytes,0,stsdBytes.length);
+        var stcoOffsetInStbl=8+stsdBytes.length+stts.len+stsz.len+stsc.len+16;   // stbl hdr + stsd + stts + stsz + stsc + (stco/co64 hdr+ver/flags+count)
+        stblB.concat(stts).concat(stsz).concat(stsc).concat(stco);
+        if(stss) stblB.concat(stss);
+        var stbl=boxOf('stbl',stblB);
+
+        var minfB=new Bld();
+        minfB.raw(mediaHeaderBytes,0,mediaHeaderBytes.length).raw(dinfBytes,0,dinfBytes.length);
+        var stblOffsetInMinf=8+mediaHeaderBytes.length+dinfBytes.length;
+        minfB.concat(stbl);
+        var minf=boxOf('minf',minfB);
+
+        var mdiaB=new Bld();
+        mdiaB.raw(mdhdBytes,0,mdhdBytes.length).raw(hdlrBytes,0,hdlrBytes.length);
+        var minfOffsetInMdia=8+mdhdBytes.length+hdlrBytes.length;
+        mdiaB.concat(minf);
+        var mdia=boxOf('mdia',mdiaB);
+
+        var trakB=new Bld();
+        trakB.raw(tkhdBytes,0,tkhdBytes.length);
+        var mdiaOffsetInTrak=8+tkhdBytes.length;
+        trakB.concat(mdia);
+        var trak=boxOf('trak',trakB);
+        var trakBytes=trak.toBytes();
+
+        trakBytesList.push(trakBytes);
+        trakInfo.push({
+          samples:samples, use64:use64,
+          stcoAbsInTrak: mdiaOffsetInTrak+minfOffsetInMdia+stblOffsetInMinf+stcoOffsetInStbl
+        });
+      });
+
+      var moovB=new Bld();
+      moovB.raw(mvhdBytes,0,mvhdBytes.length);
+      var trakStarts=[];
+      trakBytesList.forEach(function(tb){ trakStarts.push(moovB.len); moovB.bytes(tb); });
+      var moovBytes=boxOf('moov',moovB).toBytes();
+
+      var mdatDataStart=ftypBytes.length+moovBytes.length+8;
+      var mdatChunks=[], cursor=mdatDataStart;
+      trakInfo.forEach(function(ti){
+        ti.samples.forEach(function(s){ mdatChunks.push({srcOff:s.off, size:s.size, finalOff:cursor}); cursor+=s.size; });
+      });
+      var mdatSize=cursor-mdatDataStart;
+      if(8+mdatSize>0xFFFFFFFF) return null;   // 32-bit mdat box size only, for now
+
+      // patch stco/co64 entries with real final offsets, in sample order per track
+      var chunkCursor=0;
+      trakInfo.forEach(function(ti,idx){
+        var trakAbs=8+trakStarts[idx];
+        var stcoAbs=trakAbs+ti.stcoAbsInTrak;
+        var entrySize=ti.use64?8:4;
+        ti.samples.forEach(function(s,si){
+          var finalOff=mdatChunks[chunkCursor++].finalOff;
+          var entryOff=stcoAbs+si*entrySize;
+          if(ti.use64) w64(moovBytes,entryOff,finalOff); else w32(moovBytes,entryOff,finalOff);
+        });
+      });
+
+      var out=new Uint8Array(ftypBytes.length+moovBytes.length+8+mdatSize);
+      var at=0;
+      out.set(ftypBytes,at); at+=ftypBytes.length;
+      out.set(moovBytes,at); at+=moovBytes.length;
+      w32(out,at,8+mdatSize); out[at+4]=109; out[at+5]=100; out[at+6]=97; out[at+7]=116;   // 'mdat'
+      at+=8;
+      mdatChunks.forEach(function(c){ out.set(b.subarray(c.srcOff,c.srcOff+c.size),at); at+=c.size; });
+      return out;
+    } catch(e){ return null; }
+  }
   function fixMp4Duration(blob){
     return blob.arrayBuffer().then(function(buf){
+      var bytes=new Uint8Array(buf);
       try {
-        var out=patchMp4DurationBytes(new Uint8Array(buf));
+        var remuxed=remuxFragmentedMp4Bytes(bytes);
+        if(remuxed) return new Blob([remuxed],{type:blob.type});
+      } catch(e){}
+      try {
+        var out=patchMp4DurationBytes(bytes);
         return out ? new Blob([out],{type:blob.type}) : blob;
       } catch(e){ return blob; }
     })['catch'](function(){ return blob; });
