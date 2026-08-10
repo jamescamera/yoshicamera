@@ -7158,13 +7158,96 @@
   document.getElementById('bGif').textContent='GIF '+gifSize;
 
   /* ---------- video ---------- */
-  var recorder=null, chunks=[], recording=false, recStart=0, micOn=false, micStream=null;
+  var recorder=null, chunks=[], recording=false, recStart=0, recStop=0, micOn=false, micStream=null;
   var recTrack=null, nextFrameAt=0, pumpMode=false;   // the browser samples the canvas itself
   var lastGoodFrame=0, frameErrs=0, stallWarned=false;
   var recBtn=document.getElementById('bRec');
   var recDot=document.getElementById('recDot');
   var recTime=document.getElementById('recTime');
   var MAXMS=5*60*1000;
+
+  /* Chrome's WebM muxer streams the file out through ondataavailable as it
+     records, so by the time it knows the true length the header — which
+     carries a "duration unknown" placeholder — has already been handed off
+     and can never be rewritten from inside the browser. Android's gallery,
+     editors and share targets take that placeholder at face value (often
+     reading it as zero or a few frames), so the clip looks far shorter than
+     it is and cannot be trimmed past the phantom end. Chromium reserves an
+     8-byte slot for the real value precisely so it can be patched after the
+     fact — this fills that slot in with the actual recorded length. */
+  function fixWebmDuration(blob, durationMs){
+    return blob.arrayBuffer().then(function(buf){
+      try {
+        var out=patchWebmDurationBytes(new Uint8Array(buf), durationMs);
+        return out ? new Blob([out],{type:blob.type}) : blob;
+      } catch(e){ return blob; }
+    })['catch'](function(){ return blob; });
+  }
+  function vintLen(firstByte){
+    var mask=0x80, len=1;
+    while(len<=8){ if(firstByte&mask) return len; mask>>=1; len++; }
+    return 8;
+  }
+  function readEbmlId(b,off){
+    var len=vintLen(b[off]), id=0, i;
+    for(i=0;i<len;i++) id=id*256+b[off+i];
+    return {id:id, len:len};
+  }
+  function readEbmlSize(b,off){
+    var len=vintLen(b[off]);
+    var first=b[off]&(0xFF>>len);
+    var allOnes=(first===(0xFF>>len));
+    var val=first, i;
+    for(i=1;i<len;i++){ val=val*256+b[off+i]; if(b[off+i]!==0xFF) allOnes=false; }
+    return {size:val, len:len, unknown:allOnes};
+  }
+  function patchWebmDurationBytes(b, durationMs){
+    var ID_SEGMENT=0x18538067, ID_INFO=0x1549A966, ID_TIMECODESCALE=0x2AD7B1, ID_DURATION=0x4489;
+    var off=0, hdr, id, sz;
+    hdr=readEbmlId(b,off); if(hdr.id!==0x1A45DFA3) return null;   // EBML header
+    off+=hdr.len; sz=readEbmlSize(b,off); off+=sz.len;
+    if(sz.unknown) return null;
+    off+=sz.size;
+    hdr=readEbmlId(b,off); if(hdr.id!==ID_SEGMENT) return null;
+    off+=hdr.len; sz=readEbmlSize(b,off); off+=sz.len;
+    var segEnd = sz.unknown ? b.length : off+sz.size;
+    // walk Segment's direct children looking for Info; bail on anything with
+    // an unknown size before Info turns up rather than guess into a Cluster
+    var infoStart=-1, infoEnd=-1, guard=0;
+    while(off<segEnd && off<b.length && guard++<64){
+      id=readEbmlId(b,off); off+=id.len;
+      sz=readEbmlSize(b,off); off+=sz.len;
+      if(id.id===ID_INFO){
+        if(sz.unknown) return null;
+        infoStart=off; infoEnd=off+sz.size;
+        break;
+      }
+      if(sz.unknown) return null;
+      off+=sz.size;
+    }
+    if(infoStart<0) return null;
+    var scale=1000000, durOff=-1, durLen=0;
+    off=infoStart;
+    guard=0;
+    while(off<infoEnd && off<b.length && guard++<64){
+      id=readEbmlId(b,off); off+=id.len;
+      sz=readEbmlSize(b,off); off+=sz.len;
+      if(sz.unknown) break;
+      if(id.id===ID_TIMECODESCALE){
+        var v=0,i; for(i=0;i<sz.size;i++) v=v*256+b[off+i];
+        if(v>0) scale=v;
+      } else if(id.id===ID_DURATION && (sz.size===4||sz.size===8)){
+        durOff=off; durLen=sz.size;
+      }
+      off+=sz.size;
+    }
+    if(durOff<0) return null;               // no reserved slot — nothing safe to patch
+    var units=(durationMs*1e6)/scale;
+    var dv=new DataView(b.buffer, b.byteOffset, b.byteLength);
+    if(durLen===8) dv.setFloat64(durOff, units, false);
+    else dv.setFloat32(durOff, units, false);
+    return b;
+  }
 
   function pickMime(withAudio){
     if(!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
@@ -7237,11 +7320,19 @@
         }
         return;
       }
-      var url=URL.createObjectURL(blob);
-      saveUrl(url, fileName(null, isMp4?'mp4':'webm'));
-      setTimeout(function(){ URL.revokeObjectURL(url); },60000);
-      toast(isMp4 ? (recCan.width+'×'+recCan.height+' mp4 · '+Math.round(blob.size/1048576*10)/10+' MB saved')
-                  : ('webm · '+Math.round(blob.size/1048576*10)/10+' MB — this browser has no mp4 encoder'));
+      var elapsedMs=Math.max(0,(recStop||now())-recStart);
+      if(!isMp4 && elapsedMs>0){
+        fixWebmDuration(blob, elapsedMs).then(function(fixed){ save(fixed); });
+      } else {
+        save(blob);
+      }
+      function save(b){
+        var url=URL.createObjectURL(b);
+        saveUrl(url, fileName(null, isMp4?'mp4':'webm'));
+        setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+        toast(isMp4 ? (recCan.width+'×'+recCan.height+' mp4 · '+Math.round(b.size/1048576*10)/10+' MB saved')
+                    : ('webm · '+Math.round(b.size/1048576*10)/10+' MB — this browser has no mp4 encoder'));
+      }
     }
     // a timeslice guarantees data arrives while recording — without one, WebKit
     // can fire onstop before the single data event and the clip comes back empty
@@ -7252,7 +7343,7 @@
   }
   function stopRec(){
     if(!recording) return;
-    recording=false; recTrack=null;
+    recording=false; recTrack=null; recStop=now();
     recBtn.className=''; recDot.className='';
     try { recorder.stop(); } catch(e){}
   }
