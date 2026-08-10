@@ -566,7 +566,7 @@
 <canvas id="gl" class="stage"></canvas>
 <canvas id="maskv" class="stage"></canvas>
 <video id="vid" playsinline autoplay muted></video>
-<input type="file" id="fPick" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+<input type="file" id="fPick" accept="image/*,video/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 <div id="flash"></div>
 
 <div id="hud">
@@ -619,7 +619,7 @@
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bGif">GIF size</button>
-      <button class="b" id="bPhoto">Use a photo</button>
+      <button class="b" id="bPhoto">Use a photo or video</button>
       <button class="b" id="bLive" style="display:none">Back to the lens</button>
       <button class="b" id="bLook">Look</button>
       <button class="b" id="bClose">Close</button>
@@ -640,7 +640,7 @@
     <h1>Yoshi Camera</h1>
     <p id="gateLine">Every camera on one shutter.</p>
     <button id="bStart">Open the shutter</button>
-    <button id="bGatePhoto" class="alt">Or develop a photo</button>
+    <button id="bGatePhoto" class="alt">Or use a photo or video</button>
     <div id="err"></div>
   </div>
 </div>
@@ -763,7 +763,7 @@
      input than any phone sensor, so that is how the good pictures get in.
      ===================================================================== */
   var PHOTO=(function(){
-    var master=null, label='', natural='';
+    var master=null, label='', natural='', kind='', vidEl=null, vidUrl=null, vidStream=null;
     /* Gamut spends one colour of the RGB cube per pixel, and there are only
        16,777,216 of those, so a whole 24MP frame cannot obey its own rule.
        That is the hard ceiling. The device caps sit under it anyway, because
@@ -784,7 +784,8 @@
       m.x.imageSmoothingEnabled=true;
       try { m.x.imageSmoothingQuality='high'; } catch(e){}
       m.x.drawImage(img,0,0,w,h);
-      master=m;
+      stopVideo();
+      master=m; kind='image';
       natural=iw+'×'+ih;
       label=(fname||'photo').replace(/\.[^.]+$/,'').slice(0,26)+' · '+w+'×'+h+
             (k<1 ? ' (from '+natural+')' : '');
@@ -801,18 +802,90 @@
       im.onerror=function(){ try { URL.revokeObjectURL(url); } catch(e){} if(fail) fail(); };
       im.src=url;
     }
+    /* every effect already reads its picture through one shared function
+       (srcEl, in the block just below this one) that neither knows nor
+       cares whether that element is the live camera or something else —
+       so a looping <video> standing in for it needs no per-camera work at
+       all. It just has to answer the same w()/h()/el() questions master
+       does for a loaded photo. */
+    function stopVideo(){
+      if(vidEl){
+        try { vidEl.pause(); } catch(e){}
+        try { vidEl.removeAttribute('src'); vidEl.load(); } catch(e){}
+      }
+      if(vidUrl){ try { URL.revokeObjectURL(vidUrl); } catch(e){} vidUrl=null; }
+      vidStream=null;
+    }
+    function ensureVidEl(){
+      if(vidEl) return vidEl;
+      vidEl=document.createElement('video');
+      vidEl.muted=true; vidEl.loop=true; vidEl.playsInline=true; vidEl.autoplay=true;
+      vidEl.style.cssText='position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+      document.body.appendChild(vidEl);
+      return vidEl;
+    }
+    function fmtDuration(s){
+      if(!isFinite(s) || s<0) return '';
+      var m=Math.floor(s/60), r=Math.round(s%60);
+      return m+':'+(r<10?'0':'')+r;
+    }
+    function takeVideo(file, fname, done, fail){
+      var el=ensureVidEl(), url=URL.createObjectURL(file), settled=false;
+      stopVideo();                  // release whatever was loaded before this
+      vidUrl=url;
+      function cleanup(){
+        el.removeEventListener('loadeddata', onReady);
+        el.removeEventListener('error', onError);
+      }
+      function onReady(){
+        if(settled || !el.videoWidth || !el.videoHeight) return;
+        settled=true; cleanup();
+        master=null; kind='video';
+        var dur=fmtDuration(el.duration);
+        label=(fname||'video').replace(/\.[^.]+$/,'').slice(0,26)+' · '+
+              el.videoWidth+'×'+el.videoHeight+(dur?' · '+dur:'');
+        var p=el.play();
+        if(p && p['catch']) p['catch'](function(){});
+        if(done) done();
+      }
+      function onError(){
+        if(settled) return;
+        settled=true; cleanup();
+        if(fail) fail('Could not open that video.');
+      }
+      el.addEventListener('loadeddata', onReady);
+      el.addEventListener('error', onError);
+      el.src=url;
+      el.load();
+    }
     return {
-      on:function(){ return !!master; },
-      el:function(){ return master ? master.c : null; },
-      w:function(){ return master ? master.c.width : 0; },
-      h:function(){ return master ? master.c.height : 0; },
+      on:function(){ return !!master || kind==='video'; },
+      kind:function(){ return kind; },
+      el:function(){ return kind==='video' ? vidEl : (master ? master.c : null); },
+      w:function(){ return kind==='video' ? (vidEl?vidEl.videoWidth:0) : (master ? master.c.width : 0); },
+      h:function(){ return kind==='video' ? (vidEl?vidEl.videoHeight:0) : (master ? master.c.height : 0); },
       cap:cap,
       label:function(){ return label; },
-      clear:function(){ master=null; label=''; },
+      /* the audio riding along with an uploaded clip, so a recording made
+         from it doesn't come out silent — separate from the mic toggle,
+         which is its own thing and can still be added on top of this */
+      audioTracks:function(){
+        if(kind!=='video' || !vidEl) return [];
+        try {
+          if(!vidStream){
+            vidStream = vidEl.captureStream ? vidEl.captureStream()
+                      : (vidEl.mozCaptureStream ? vidEl.mozCaptureStream() : null);
+          }
+          return vidStream ? vidStream.getAudioTracks() : [];
+        } catch(e){ return []; }
+      },
+      clear:function(){ master=null; label=''; kind=''; stopVideo(); },
       load:function(file, done, fail){
         if(!file){ if(fail) fail(); return; }
-        if(!/^image\//.test(file.type||'')){
-          if(fail) fail('That is not a picture this browser can open.');
+        var t=file.type||'';
+        if(/^video\//.test(t)){ takeVideo(file, file.name, done, fail); return; }
+        if(!/^image\//.test(t)){
+          if(fail) fail('That is not a photo or video this browser can open.');
           return;
         }
         /* from-image keeps a portrait frame portrait: the X-Pro 2 writes the
@@ -5794,7 +5867,7 @@
     bindQuick();
     paintRack();
     paintPips();
-    if(!quiet) toast(c.name + ((PHOTO.on() && WANTS_MOTION[c.id]) ? ' — this one wants movement' : ''));
+    if(!quiet) toast(c.name + ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : ''));
   }
 
   /* these read the difference between frames, so a still starves them */
@@ -6372,7 +6445,7 @@
       });
   }
   function fail(m){
-    errEl.innerHTML = m + ' \u2014 or use <b>Or develop a photo</b> below, which needs no camera at all.';
+    errEl.innerHTML = m + ' \u2014 or use <b>Or use a photo or video</b> below, which needs no camera at all.';
     errEl.style.display='block';
   }
 
@@ -7538,10 +7611,15 @@
       // let the browser sample the canvas itself
       try { s=recCan.captureStream(30); } catch(e){ toast('Capture failed'); return; }
     }
-    var withAudio=!!(micOn&&micStream);
-    if(withAudio){
+    var micAudio=!!(micOn&&micStream);
+    var srcAudio=PHOTO.on() ? PHOTO.audioTracks() : [];
+    var withAudio=micAudio || srcAudio.length>0;
+    if(micAudio){
       var at=micStream.getAudioTracks(),i;
       for(i=0;i<at.length;i++) s.addTrack(at[i]);
+    }
+    if(srcAudio.length){
+      var j; for(j=0;j<srcAudio.length;j++) s.addTrack(srcAudio[j]);
     }
     var mime=pickMime(withAudio);
     try {
@@ -7646,7 +7724,7 @@
     this.textContent=held?'Held':'Hold';
   });
   document.getElementById('bFlip').addEventListener('click', function(){
-    if(PHOTO.on()){ toast('There is no other side to a photograph'); return; }
+    if(PHOTO.on()){ toast('There is no other side to a loaded file'); return; }
     facing=(facing==='user')?'environment':'user';
     start();
   });
@@ -7695,7 +7773,7 @@
 
     function syncUI(){
       var on=PHOTO.on();
-      bPhoto.textContent = on ? 'Change photo' : 'Use a photo';
+      bPhoto.textContent = on ? (PHOTO.kind()==='video' ? 'Change video' : 'Change photo') : 'Use a photo or video';
       bPhoto.className   = on ? 'b on' : 'b';
       bLive.style.display = on ? '' : 'none';
       hSub.textContent = on ? PHOTO.label() : 'swipe to change camera';
@@ -7727,7 +7805,7 @@
     }
 
     function load(file){
-      PHOTO.load(file, enter, function(m){ toast(m||'Could not open that picture'); });
+      PHOTO.load(file, enter, function(m){ toast(m||'Could not open that file'); });
     }
 
     pick.addEventListener('change', function(){
@@ -7752,7 +7830,7 @@
       var it=e.clipboardData && e.clipboardData.items, i, f;
       if(!it) return;
       for(i=0;i<it.length;i++){
-        if(it[i].type && it[i].type.indexOf('image/')===0){
+        if(it[i].type && (it[i].type.indexOf('image/')===0 || it[i].type.indexOf('video/')===0)){
           f=it[i].getAsFile();
           if(f){ load(f); return; }
         }

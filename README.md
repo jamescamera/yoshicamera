@@ -75,8 +75,12 @@ same file.
 - **Extra white.** Exports a still as an Ultra HDR JPEG — an ordinary SDR
   image with a gain map appended, so HDR screens can drive the highlights
   past white. A mask overlay (`Show mask`) previews which pixels will burn.
-- **A photo instead of a lens.** `Use a photo` runs every camera on a picture
-  you load, drag in, or paste, instead of the live feed — no camera needed.
+- **A photo or video instead of a lens.** `Use a photo or video` runs every
+  camera on a picture or clip you load, drag in, or paste, instead of the
+  live feed — no camera needed. A loaded video loops continuously as the
+  source, so effects that read motion work on it the same way they do on
+  a live feed, and recording from it carries the clip's own audio through
+  to the export, not just the mic.
 - **Zoom, torch and focus.** Where the browser exposes them (Chrome on
   Android), lens controls appear on the picture itself and in the setup
   sheet. iOS hands out none of these, by Apple's own design.
