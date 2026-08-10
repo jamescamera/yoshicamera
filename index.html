@@ -1622,8 +1622,8 @@
       '🦉🥥🍵🪵🧺🪑🚪🥯🫙🪔🧳🎺🪕'+
       '🕶️🎩🔭📼📷🕹️🎬🖤🪦🔌🧦'+
       '🥚🧻🫧🩹🦴📃🧂🕊️🍥🪶🥛'+
-      '⬛⬜🟥🟧🟨🟩🟦🟪🟫🔴🟠🟡🟢🔵🟣🟤⚫⚪🔶🔷🔸🔺🔻'+
-      '🥑🍈🧁🍭🍠🪸🫗🦪🍹🍸🍾🥂🧋🫖🍶';
+      '🥑🍈🧁🍭🍠🪸🫗🦪🍹🍸🍾🥂🧋🫖🍶'+
+      '🐊🦂🦔🐼🐨🦥🦕🐿️🚀🛸👽🤖👻💀🤡🧙🦸🎸🎷🍕🌮🍔🍣🎄🎁';
     var pal=[], atlas=null, AT=48, ACOLS=24, lutC=null, lutT=null, groundFor='';
     var cols=0, rows=0, TS=0, src=null, cell=null, rnd=null, pixels=null, lev=makeLeveller(), settled=false;
     var v={ match:'colour', ground:'dark', tile:13, gap:5, punch:45, settle:55 };
@@ -5206,7 +5206,12 @@
     var v={ ground:'paper', population:55, pull:35, loyalty:60, spite:35, fickle:40, trail:55 };
 
     function targetN(){
-      var base=LOW_MEMORY?90:(SLOW_DEVICE?150:260), extra=LOW_MEMORY?90:(SLOW_DEVICE?160:340);
+      // Live samples a dot's fill from the picture under it, so it only
+      // reads as the scene rather than a colour smear once there are enough
+      // dots to actually cover it — a swarm-sized population isn't enough.
+      var live=(v.ground==='live');
+      var base=live?(LOW_MEMORY?260:(SLOW_DEVICE?500:900)):(LOW_MEMORY?90:(SLOW_DEVICE?150:260));
+      var extra=live?(LOW_MEMORY?540:(SLOW_DEVICE?1300:2600)):(LOW_MEMORY?90:(SLOW_DEVICE?160:340));
       return Math.max(24, Math.round(base+extra*(v.population/100)));
     }
     function rePick(i){
