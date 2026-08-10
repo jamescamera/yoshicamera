@@ -2837,7 +2837,7 @@
   (function(){
     var RING=26, ring=[], head=0, t=0, RW=0, RH=0;
     var cx=0.5, cy=0.5, tx=0.5, ty=0.5;   // the point it folds into
-    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:82, twist:0, delay:2, tint:22, ghost:0 };
+    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:65, twist:0, delay:2, tint:22, ghost:0 };
 
     function build(){
       RW=Math.max(2,Math.round(stage.width*0.5));
@@ -2852,14 +2852,15 @@
     }
     function drawBase(){
       var SW=stage.width, SH=stage.height;
-      if(!vid.videoWidth) return;
-      var vr=vid.videoWidth/vid.videoHeight, cr=SW/SH, dw, dh;
+      if(!srcReady()) return;
+      var vw=srcW(), vh=srcH();
+      var vr=vw/vh, cr=SW/SH, dw, dh;
       if(vr>cr){ dh=SH; dw=dh*vr; } else { dw=SW; dh=dw/vr; }
       ctx.save();
       ctx.setTransform(1,0,0,1,0,0);
       if(v.ghost) ctx.globalAlpha=0.35;
-      if(facing==='user'){ ctx.translate(SW,0); ctx.scale(-1,1); }
-      ctx.drawImage(vid,(SW-dw)/2,(SH-dh)/2,dw,dh);
+      if(srcMirror()){ ctx.translate(SW,0); ctx.scale(-1,1); }
+      ctx.drawImage(srcEl(),(SW-dw)/2,(SH-dh)/2,dw,dh);
       ctx.restore();
       ctx.globalAlpha=1;
     }
@@ -4902,7 +4903,7 @@
   /* --- new hybrids: Veil, Fresco, Vaporwave --- */
   (function(){
     var src=mk(), out=mk(), FW=128, FH=176, lastDraw=0;
-    var v={ dir:'vert', rep:32, flow:'drift', pal:'warning', bite:72, gap:28 };
+    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0 };
     function build(){
       var base=SLOW_DEVICE?(LOW_MEMORY?104:124):154;
       FW=Math.max(72,Math.min(190,Math.round(base)));
@@ -4935,7 +4936,7 @@
         lastDraw=stamp;
         if(!grabInto(src,FW,FH)) return;
         var img=src.x.getImageData(0,0,FW,FH), d=img.data;
-        var vert=v.dir==='vert', stripes=Math.max(6,v.rep|0), bandCells=7, gapCells=1+Math.round((v.gap/100)*5);
+        var vert=v.dir==='vert', stripes=Math.max(6,v.rep|0), bandCells=7, gapCells=Math.round((v.gap/100)*5);
         var ow=vert ? stripes*(bandCells+gapCells) : FW;
         var oh=!vert ? stripes*(bandCells+gapCells) : FH;
         if(out.c.width!==ow||out.c.height!==oh){ out.c.width=ow; out.c.height=oh; }
@@ -4993,7 +4994,11 @@
         out.x.putImageData(outImg,0,0);
         ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
         ctx.fillStyle=pal[0]; ctx.fillRect(0,0,stage.width,stage.height);
-        ctx.imageSmoothingEnabled=false;
+        /* blowing the tiny band buffer up with nearest-neighbour gave every
+           ink stroke hard square edges; smoothing it back out is what turns
+           those into soft, inky-looking bands instead of visible pixels */
+        ctx.imageSmoothingEnabled=true;
+        if('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality='high';
         ctx.drawImage(out.c,0,0,stage.width,stage.height);
         hSub.textContent=stripes+' ink bands · '+v.flow+' · '+v.pal+(SLOW_DEVICE?' · mobile safe':'');
       }
@@ -5003,7 +5008,7 @@
   (function(){
     var src=mk(), hist=[], head=0, count=0, FW=420, FH=320, lastDraw=0;
     var centreX=.5, centreY=.5, targetX=.5, targetY=.5;
-    var v={ dir:'down', smear:68, feed:72, rep:58, bleed:46, edge:62 };
+    var v={ dir:'down', smear:68, feed:72, rep:58, bleed:46, edge:0 };
     function build(){
       FW=SLOW_DEVICE?(LOW_MEMORY?280:340):Math.max(360,Math.min(620,Math.round(W*.70)));
       FH=Math.max(180,Math.round(FW*(H/Math.max(W,1))));
