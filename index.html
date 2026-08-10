@@ -6093,6 +6093,17 @@
     document.getElementById('camNote').textContent=c.note;
     showGL(!!c.gl);
     if(!camReady[c.id]){ c.init(); camReady[c.id]=1; } else if(c.size) c.size();
+    // init()/size() above only resets the new camera's own buffers — nothing
+    // paints onto the stage until the next tick(), so a still (or a recording,
+    // below) taken in that gap would otherwise save the previous camera's
+    // last frame rather than this one. Render its first frame right now.
+    if(!held && srcReady()){
+      try {
+        c.frame();
+        if(!glActive()) drawRaw(1-quickMix/100);
+        lastGoodFrame=now(); lastEffectAt=now();
+      } catch(e){}
+    }
     // refresh the delivery canvas straight away, so a swipe mid-record
     // never leaves the clip frozen on the last frame of the old camera
     if(recording){ try { paintRec(); } catch(e){} }
