@@ -737,7 +737,7 @@
      whether the export is a 240px GIF or a 12-megapixel plate */
   function stampMark(g,w,h){
     if(!w||!h) return;
-    var s=Math.min(w,h), size=Math.max(9,Math.min(46,Math.round(s*0.034)));
+    var s=Math.min(w,h), size=Math.max(8,Math.min(30,Math.round(s*0.02)));
     var pad=Math.max(6,Math.round(size*0.9));
     g.save();
     g.textAlign='right'; g.textBaseline='alphabetic';
@@ -5317,8 +5317,13 @@
         ctx.globalAlpha=1;
         ctx.fillStyle=ground;
         ctx.fillRect(0,0,SW,SH);
-        if(live){ ctx.globalAlpha=.14; ctx.drawImage(src.c,0,0,SW,SH); ctx.globalAlpha=1; }
         ctx.drawImage(paint.c,0,0);
+        // paint.c is opaque everywhere (its own fade wash never leaves a gap),
+        // so drawing the live hint before it — as this used to — meant the
+        // hint was immediately painted over and never actually visible. It
+        // has to go on top, and needs real opacity or it still reads as
+        // nothing but scattered dots on black.
+        if(live){ ctx.globalAlpha=.45; ctx.drawImage(src.c,0,0,SW,SH); ctx.globalAlpha=1; }
         hSub.textContent=N+' dots · '+v.ground;
       }
     });
@@ -7420,6 +7425,82 @@
     return b;
   }
 
+  /* Chromium's own MP4 muxer — the one actually used on most Android
+     devices, since they support video/mp4 recording — writes the overall
+     movie duration correctly (moov/mvhd) but copies that same raw number
+     straight into each track's moov/trak/mdia/mdhd without rescaling it
+     to that box's own timescale. A video track built at a 30000 timescale
+     ends up declaring a duration meant for a 1000 timescale, so it reads
+     as roughly a thirtieth of the real length — which is exactly the box
+     video editors read for a track's playable length, so they clip the
+     "editable" range to that phantom fraction of a second. Confirmed by
+     recording a real clip and inspecting the box bytes directly. */
+  function patchMp4DurationBytes(b){
+    function u32(o){ return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
+    function u64(o){ return u32(o)*4294967296+u32(o+4); }
+    function w32(o,v){ b[o]=(v>>>24)&255; b[o+1]=(v>>>16)&255; b[o+2]=(v>>>8)&255; b[o+3]=v&255; }
+    function w64(o,v){ var hi=Math.floor(v/4294967296); w32(o,hi); w32(o+4,v>>>0); }
+    function findBox(start,end,type){
+      var off=start;
+      while(off+8<=end){
+        var size=u32(off);
+        var t=String.fromCharCode(b[off+4],b[off+5],b[off+6],b[off+7]);
+        var hdr=8;
+        if(size===1){ size=u64(off+8); hdr=16; }
+        else if(size===0){ size=end-off; }
+        if(size<hdr || off+size>end) return null;
+        if(t===type) return {off:off, hdr:hdr, size:size};
+        off+=size;
+      }
+      return null;
+    }
+    function findAllBoxes(start,end,type){
+      var off=start, out=[];
+      while(off+8<=end){
+        var size=u32(off);
+        var t=String.fromCharCode(b[off+4],b[off+5],b[off+6],b[off+7]);
+        var hdr=8;
+        if(size===1){ size=u64(off+8); hdr=16; }
+        else if(size===0){ size=end-off; }
+        if(size<hdr || off+size>end) break;
+        if(t===type) out.push({off:off, hdr:hdr, size:size});
+        off+=size;
+      }
+      return out;
+    }
+    var moov=findBox(0,b.length,'moov');
+    if(!moov) return null;
+    var moovStart=moov.off+moov.hdr, moovEnd=moov.off+moov.size;
+    var mvhd=findBox(moovStart,moovEnd,'mvhd');
+    if(!mvhd) return null;
+    var mvC=mvhd.off+mvhd.hdr, mvVer=b[mvC], movScale, movDur;
+    if(mvVer===1){ movScale=u32(mvC+20); movDur=u64(mvC+24); }
+    else { movScale=u32(mvC+12); movDur=u32(mvC+16); }
+    if(!movScale || !movDur) return null;
+    var realSeconds=movDur/movScale;
+    var traks=findAllBoxes(moovStart,moovEnd,'trak'), fixed=0, i;
+    for(i=0;i<traks.length;i++){
+      var t=traks[i], tStart=t.off+t.hdr, tEnd=t.off+t.size;
+      var mdia=findBox(tStart,tEnd,'mdia');
+      if(!mdia) continue;
+      var mdhd=findBox(mdia.off+mdia.hdr, mdia.off+mdia.size, 'mdhd');
+      if(!mdhd) continue;
+      var dC=mdhd.off+mdhd.hdr, dVer=b[dC], tsOff, durOff, trackScale;
+      if(dVer===1){ tsOff=dC+20; durOff=tsOff+4; trackScale=u32(tsOff); if(!trackScale) continue; w64(durOff, Math.round(realSeconds*trackScale)); }
+      else { tsOff=dC+12; durOff=tsOff+4; trackScale=u32(tsOff); if(!trackScale) continue; w32(durOff, Math.round(realSeconds*trackScale)>>>0); }
+      fixed++;
+    }
+    return fixed>0 ? b : null;
+  }
+  function fixMp4Duration(blob){
+    return blob.arrayBuffer().then(function(buf){
+      try {
+        var out=patchMp4DurationBytes(new Uint8Array(buf));
+        return out ? new Blob([out],{type:blob.type}) : blob;
+      } catch(e){ return blob; }
+    })['catch'](function(){ return blob; });
+  }
+
   function pickMime(withAudio){
     if(!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
     var mp4 = withAudio
@@ -7494,6 +7575,8 @@
       var elapsedMs=Math.max(0,(recStop||now())-recStart);
       if(!isMp4 && elapsedMs>0){
         fixWebmDuration(blob, elapsedMs).then(function(fixed){ save(fixed); });
+      } else if(isMp4){
+        fixMp4Duration(blob).then(function(fixed){ save(fixed); });
       } else {
         save(blob);
       }
