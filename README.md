@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 35 instruments. Swipe left or right (or use the
+The rack currently holds 36 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -56,6 +56,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Veil | An ink-band camera |
 | Fresco | A painterly glitch camera |
 | Current | A motion-field camera |
+| Colony | A friend-and-enemy camera |
 | Afterimage | An accumulated exposure camera |
 | Glass | A pane in front of the scene |
 
