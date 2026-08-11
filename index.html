@@ -2143,13 +2143,20 @@
       R=Math.max(2.5,Math.sqrt((W*H)/(2.598*v.n)));
       var hs=Math.sqrt(3)*R, vs=1.5*R;
       var ncols=Math.ceil(W/hs)+2, nrows=Math.ceil(H/vs)+2;
-      var cx=W/2, cy=H/2, half=Math.min(W,H)/2, p=1+(v.dome/100)*1.6;
+      // normalised to the frame's own half-width and half-height, not a
+      // circle inscribed in its shorter side — on any non-square frame
+      // that circle left a lot of the picture well outside it, where the
+      // exponent below blows up and those facets' UV coordinates all
+      // saturate at the same clamped edge — many hexagons sampling one
+      // sliver of source pixels, which reads as smeared, stretched streaks
+      // toward the edges instead of a smooth dome.
+      var cx=W/2, cy=H/2, halfW=W/2, halfH=H/2, p=1+(v.dome/100)*1.6;
       facets=[];
       var r,c,x,y,nx,ny,rr2,k,su,sv;
       for(r=-1;r<nrows;r++) for(c=-1;c<ncols;c++){
         x=c*hs+((r&1)?hs/2:0); y=r*vs;
         if(x<-hs||x>W+hs||y<-vs||y>H+vs) continue;
-        nx=(x-cx)/half; ny=(y-cy)/half;
+        nx=(x-cx)/halfW; ny=(y-cy)/halfH;
         rr2=Math.sqrt(nx*nx+ny*ny);
         if(rr2<0.00001){ su=0.5; sv=0.5; }
         else { k=Math.pow(rr2,p)/rr2; su=0.5+nx*k*0.5; sv=0.5+ny*k*0.5; }
@@ -5918,7 +5925,7 @@
      draws them as, against a softened, warmed picture behind them. */
   (function(){
     var src=mk(), RW=140, RH=180;
-    var v={ shape:'circle', threshold:55, size:45, sparkle:30, soft:55, density:45, warmth:40 };
+    var v={ shape:'circle', threshold:55, size:45, sparkle:30, soft:0, density:45, warmth:40 };
     function build(){
       RW=SLOW_DEVICE?(LOW_MEMORY?96:120):160;
       RH=Math.max(40,Math.round(RW*(H/Math.max(W,1))));
