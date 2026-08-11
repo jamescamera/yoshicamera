@@ -221,6 +221,9 @@ follows Skilling's algorithm. Neither is claimed here.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE). The source is public so the privacy claims
-above can be checked rather than trusted. Images and video you make with it
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, noncommercial
+use: run it, fork it, learn from it, modify it. Commercial use (a hosted
+clone, bundling it into a product, anything sold) isn't covered and needs a
+separate agreement. The source is public so the privacy claims above can be
+checked rather than trusted, regardless. Images and video you make with it
 are entirely yours.
