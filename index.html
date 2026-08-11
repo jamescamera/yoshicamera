@@ -1002,13 +1002,20 @@
     motionCan.x.drawImage(el, sx,sy,cw,ch, 0,0,vw,vh);
   }
 
+  /* a stacked camera's second stage reads the first stage's own output
+     instead of the live/photo source — set only for the duration of that
+     second frame() call, by runChain() below */
+  var chainSrc=null;
+
   /* one place that answers "what am I photographing" */
-  function srcEl(){ if(photoMotionActive()) return motionCan.c; return PHOTO.on() ? PHOTO.el() : vid; }
-  function srcW(){ if(photoMotionActive()) return motionCan.c.width; return PHOTO.on() ? PHOTO.w() : (vid.videoWidth||0); }
-  function srcH(){ if(photoMotionActive()) return motionCan.c.height; return PHOTO.on() ? PHOTO.h() : (vid.videoHeight||0); }
+  function srcEl(){ if(chainSrc) return chainSrc.el; if(photoMotionActive()) return motionCan.c; return PHOTO.on() ? PHOTO.el() : vid; }
+  function srcW(){ if(chainSrc) return chainSrc.w; if(photoMotionActive()) return motionCan.c.width; return PHOTO.on() ? PHOTO.w() : (vid.videoWidth||0); }
+  function srcH(){ if(chainSrc) return chainSrc.h; if(photoMotionActive()) return motionCan.c.height; return PHOTO.on() ? PHOTO.h() : (vid.videoHeight||0); }
   function srcReady(){ return srcW()>0 && srcH()>0; }
-  /* a file is not a mirror — only the front lens gets flipped */
-  function srcMirror(){ return !PHOTO.on() && facing==='user'; }
+  /* a file is not a mirror — only the front lens gets flipped. The first
+     stage of a chain already mirrored (or didn't) as appropriate, so the
+     second stage must never mirror its already-composed input again */
+  function srcMirror(){ if(chainSrc) return false; return !PHOTO.on() && facing==='user'; }
 
   /* pull a mirrored, cover-cropped frame into any surface */
   function grabInto(o, w, h){
@@ -6117,6 +6124,52 @@
     });
   })();
 
+  /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
+     Not a real feature yet — a quick test of runChain() (further down) to
+     see whether feeding one camera's own output into a second one as its
+     "source" is worth building into an actual pick-any-two interface, or
+     just an interesting dead end. Each control panel here is whichever
+     camera is second in its own pair — the first stage keeps its last-used
+     settings from whenever it was last used on its own. */
+  (function(){
+    var cfg={
+      id:'stack_ink_vhs', name:'Ink → VHS', line:'A stacked-effect prototype',
+      note:'Ink runs first; VHS then reprocesses Ink\'s own rendered picture rather than the camera feed. The controls below are the real VHS ones, shared with VHS on its own — Ink is wherever you last left it.',
+      v:{}, ctrl:[],
+      init:build, size:build,
+      frame:function(){
+        runChain('ink','vhs');
+        hSub.textContent='ink → vhs · stack prototype';
+      }
+    };
+    function build(){
+      var b=camById('vhs');
+      if(!b) return;
+      if(!camReady.vhs){ b.init(); camReady.vhs=1; }
+      cfg.v=b.v; cfg.ctrl=b.ctrl;
+    }
+    reg(cfg);
+  })();
+  (function(){
+    var cfg={
+      id:'stack_mosaic_rain', name:'Mosaic → Rain', line:'A stacked-effect prototype',
+      note:'Mosaic runs first; Rain then reprocesses Mosaic\'s own rendered picture rather than the camera feed. The controls below are the real Rain ones, shared with Rain on its own — Mosaic is wherever you last left it.',
+      v:{}, ctrl:[],
+      init:build, size:build,
+      frame:function(){
+        runChain('mosaic','rain');
+        hSub.textContent='mosaic → rain · stack prototype';
+      }
+    };
+    function build(){
+      var b=camById('rain');
+      if(!b) return;
+      if(!camReady.rain){ b.init(); camReady.rain=1; }
+      cfg.v=b.v; cfg.ctrl=b.ctrl;
+    }
+    reg(cfg);
+  })();
+
   (function(){
     function moveTo(id,to){
       var k=-1;
@@ -7016,6 +7069,30 @@
   function glActive(){ return !!(CAMS[cur] && CAMS[cur].gl); }
 
   function sourceCanvas(){ return glActive() ? glCanvas : stage; }
+  function camById(id){
+    for(var i=0;i<CAMS.length;i++) if(CAMS[i].id===id) return CAMS[i];
+    return null;
+  }
+  var chainCan=mk();
+  /* runs camera A normally, then feeds A's own rendered output into camera
+     B as its source instead of the live/photo feed — a first, minimal way
+     to stack two effects rather than picking just one */
+  function runChain(idA, idB){
+    var a=camById(idA), b=camById(idB);
+    if(!a || !b) return false;
+    if(!camReady[a.id]){ a.init(); camReady[a.id]=1; }
+    if(!camReady[b.id]){ b.init(); camReady[b.id]=1; }
+    a.frame();
+    var S=a.gl?glCanvas:stage, sw=S.width, sh=S.height;
+    if(!sw||!sh) return false;
+    if(chainCan.c.width!==sw||chainCan.c.height!==sh){ chainCan.c.width=sw; chainCan.c.height=sh; }
+    chainCan.x.setTransform(1,0,0,1,0,0);
+    chainCan.x.clearRect(0,0,sw,sh);
+    chainCan.x.drawImage(S,0,0);
+    chainSrc={el:chainCan.c, w:sw, h:sh};
+    try { b.frame(); } finally { chainSrc=null; }
+    return true;
+  }
   function paintRec(){
     var S=sourceCanvas();
     if(!S || !S.width || !S.height) S=stage;      // fall back rather than stall
