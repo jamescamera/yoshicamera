@@ -922,10 +922,90 @@
     };
   })();
 
+  /* ---------------- MOTION SIM — a synthetic pan for photo-only cameras
+     ----------------
+     A handful of cameras read the difference between frames, and a loaded
+     photo never changes, so they have nothing to work with. This turns
+     the device's own tilt into a slow virtual pan across the photo, so
+     those cameras get real, continuous movement to react to instead of one
+     frozen frame — prototype scope, on Ribbon and Afterimage only, for now.
+     Falls back to a gentle scripted drift wherever the sensor isn't
+     available or hasn't been granted, so the effect isn't just silently
+     absent there. */
+  var motionCan=mk();
+  var MOTION_SIM={ ribbon:1, afterimage:1 };
+  var motion=(function(){
+    var enabled=false, usingSensor=false, tx=0, ty=0, ox=0, oy=0, lastBeta=null, lastGamma=null;
+    function onOrient(e){
+      if(e.beta==null || e.gamma==null) return;
+      usingSensor=true;
+      if(lastBeta===null){ lastBeta=e.beta; lastGamma=e.gamma; return; }
+      var db=e.beta-lastBeta, dg=e.gamma-lastGamma;
+      lastBeta=e.beta; lastGamma=e.gamma;
+      // small per-event deltas accumulated into a clamped virtual pan,
+      // rather than absolute orientation, so it doesn't matter how the
+      // phone is held when a photo is loaded — only how it moves after
+      tx=clamp(tx-dg*0.006,-1,1);
+      ty=clamp(ty-db*0.006,-1,1);
+    }
+    function start(){
+      if(enabled) return; enabled=true;
+      try { window.addEventListener('deviceorientation', onOrient, false); } catch(e){}
+    }
+    function requestPermission(){
+      try {
+        if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+          return DeviceOrientationEvent.requestPermission().then(function(r){
+            if(r==='granted') start();
+            return r;
+          })['catch'](function(){ return 'denied'; });
+        }
+      } catch(e){}
+      start();               // Android, and any browser without the gate
+      return Promise.resolve('granted');
+    }
+    function update(){
+      if(!usingSensor){
+        var t=now()*0.00035;
+        tx=Math.sin(t)*0.6; ty=Math.cos(t*0.7)*0.5;
+      }
+      ox+=(tx-ox)*0.08; oy+=(ty-oy)*0.08;
+    }
+    return { start:start, requestPermission:requestPermission, update:update,
+             x:function(){ return ox; }, y:function(){ return oy; } };
+  })();
+  function photoMotionActive(){
+    return PHOTO.on() && PHOTO.kind()==='image' && !!(CAMS[cur] && MOTION_SIM[CAMS[cur].id]);
+  }
+  /* repaints motionCan with the current pan crop of the loaded photo;
+     called once a frame, before the active camera reads the source. The
+     crop itself is always figured against the photo's true full size, but
+     the buffer it's drawn into tracks the current stage resolution rather
+     than a fixed size — small and cheap through ordinary live preview,
+     and automatically the photo's own full resolution during the one-off
+     full-size render developPhoto() does right before a shutter, so a
+     still never ends up sourced from a blurry, stretched-up preview crop. */
+  function updateMotionSrc(){
+    if(!photoMotionActive()) return;
+    motion.update();
+    var el=PHOTO.el(), pw=PHOTO.w(), ph=PHOTO.h();
+    if(!pw||!ph) return;
+    var vw=Math.max(2,Math.round(Math.min(pw,stage.width||pw))),
+        vh=Math.max(2,Math.round(Math.min(ph,stage.height||ph)));
+    var zoom=1.22, cw=pw/zoom, ch=ph/zoom;               // headroom to pan within
+    var maxx=(pw-cw)/2, maxy=(ph-ch)/2;
+    var cx=pw/2+motion.x()*maxx, cy=ph/2+motion.y()*maxy;
+    var sx=clamp(cx-cw/2,0,pw-cw), sy=clamp(cy-ch/2,0,ph-ch);
+    if(motionCan.c.width!==vw || motionCan.c.height!==vh){ motionCan.c.width=vw; motionCan.c.height=vh; }
+    motionCan.x.setTransform(1,0,0,1,0,0);
+    motionCan.x.clearRect(0,0,vw,vh);
+    motionCan.x.drawImage(el, sx,sy,cw,ch, 0,0,vw,vh);
+  }
+
   /* one place that answers "what am I photographing" */
-  function srcEl(){ return PHOTO.on() ? PHOTO.el() : vid; }
-  function srcW(){ return PHOTO.on() ? PHOTO.w() : (vid.videoWidth||0); }
-  function srcH(){ return PHOTO.on() ? PHOTO.h() : (vid.videoHeight||0); }
+  function srcEl(){ if(photoMotionActive()) return motionCan.c; return PHOTO.on() ? PHOTO.el() : vid; }
+  function srcW(){ if(photoMotionActive()) return motionCan.c.width; return PHOTO.on() ? PHOTO.w() : (vid.videoWidth||0); }
+  function srcH(){ if(photoMotionActive()) return motionCan.c.height; return PHOTO.on() ? PHOTO.h() : (vid.videoHeight||0); }
   function srcReady(){ return srcW()>0 && srcH()>0; }
   /* a file is not a mirror — only the front lens gets flipped */
   function srcMirror(){ return !PHOTO.on() && facing==='user'; }
@@ -6106,6 +6186,7 @@
     // last frame rather than this one. Render its first frame right now.
     if(!held && srcReady()){
       try {
+        updateMotionSrc();
         c.frame();
         if(!glActive()) drawRaw(1-quickMix/100);
         lastGoodFrame=now(); lastEffectAt=now();
@@ -6762,6 +6843,7 @@
           var delay=effectDelay(CAMS[cur].id);
           if(!delay || stamp-lastEffectAt>=delay){
             try {
+              updateMotionSrc();
               CAMS[cur].frame();
               lastGoodFrame=stamp; frameErrs=0; lastEffectAt=stamp;
             } catch(e){
@@ -7577,13 +7659,14 @@
         W=Math.round(oldW*scaleX); H=Math.round(oldH*scaleY);
         camReady={}; c.init();
         k=warmFrames(c.id);
+        updateMotionSrc();
         for(i=0;i<k;i++) c.frame();
         if(!c.gl) drawRaw(1-quickMix/100);
         shotNow();
       } catch(e){
         toast('Not enough memory at full size — saving the preview instead');
         try {
-          if(grown){ setStageSize(sw,sh); grown=false; W=oldW; H=oldH; camReady={}; c.init(); c.frame(); }
+          if(grown){ setStageSize(sw,sh); grown=false; W=oldW; H=oldH; camReady={}; c.init(); updateMotionSrc(); c.frame(); }
           shotNow();
         } catch(e2){}
       }
@@ -8413,7 +8496,13 @@
       this.value='';                // so the same file can be chosen twice
       if(f) load(f);
     });
-    function ask(){ pick.click(); }
+    function ask(){
+      pick.click();
+      // a loaded photo is the one case the motion sim (Ribbon, Afterimage)
+      // has any use for tilt, and iOS only grants the sensor from within a
+      // user gesture — this tap is the first one available for that
+      try { motion.requestPermission(); } catch(e){}
+    }
     bPhoto.addEventListener('click', function(){ ask(); openSheet(false); });
     if(bGate) bGate.addEventListener('click', ask);
     bLive.addEventListener('click', function(){ leave(); openSheet(false); });
