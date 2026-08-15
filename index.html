@@ -2201,6 +2201,7 @@
         ctx.setTransform(kx,0,0,ky,0,0);
         ctx.fillStyle='#0D0B0A'; ctx.fillRect(0,0,W,H);
         var c,x0,x1,y0,y1,cw,ch,src2,u0,u1,vv0,vv1,bite,uc,vc,uw,vh2,sx,sy,sw,sh,nx,ny,tw,th,a,b,fx,fy,i;
+        var ov=1/Math.max(0.001,Math.min(kx,ky));   // one device pixel, in W/H units
         for(i=0;i<cells.length;i++){
           c=cells[i];
           x0=cols[c.i]; x1=cols[c.i+1]; y0=rows[c.j]; y1=rows[c.j+1];
@@ -2221,7 +2222,10 @@
             ctx.save();
             ctx.translate(x0+a*tw+(fx<0?tw:0), y0+b*th+(fy<0?th:0));
             ctx.scale(fx,fy);
-            ctx.drawImage(src2,sx,sy,sw,sh,0,0,tw,th);
+            // the cell edges land on fractions of a pixel, so drawn at exactly
+            // their own size the dark ground showed through between them as a
+            // grid of thin seams. A pixel of overlap closes it.
+            ctx.drawImage(src2,sx,sy,sw,sh,0,0,tw+ov,th+ov);
             ctx.restore();
           }
         }
@@ -2510,7 +2514,7 @@
   (function(){
     var src=mk(), SW2=SLOW_DEVICE?360:480, SH2=480, hist=[], n=0;
     var centreX=.5, centreY=.48, targetX=.5, targetY=.48;
-    var v={ mode:'orbit', dye:'spectral', rings:33, memory:62, twist:51, aberration:36, pulse:30, drift:30 };
+    var v={ mode:'orbit', dye:'clean', rings:29, memory:52, twist:0, aberration:0, pulse:30, drift:0 };
     function build(){
       SW2=SLOW_DEVICE?(LOW_MEMORY?320:360):480;
       SH2=Math.max(80,Math.round(SW2*(H/Math.max(W,1))));
@@ -2569,7 +2573,14 @@
         var maxIdx=Math.min(hist.length-1,Math.max(0,Math.floor((v.memory/100)*(hist.length-1))));
         ctx.setTransform(1,0,0,1,0,0);
         ctx.fillStyle='#070811'; ctx.fillRect(0,0,SW,SH);
-        ctx.filter=filt(0,0); ctx.drawImage(hist[0].c,0,0,SW,SH); ctx.filter='none';
+        /* the backmost layer is simply the current frame, and it covers most
+           of the screen — taking it from the small history buffer meant the
+           whole picture was an upscale of a 480px-wide copy, which is what
+           read as the camera being low quality. The rings still come from
+           history, where softness is the point and the memory is worth it. */
+        ctx.filter=filt(0,0);
+        try { drawRaw(1); } catch(e){ ctx.drawImage(hist[0].c,0,0,SW,SH); }
+        ctx.filter='none';
         for(var k=1;k<count;k++){
           var q=k/(count-1), rad=rr*(1-q), idx=Math.min(maxIdx,Math.floor(q*maxIdx)), fr=hist[idx]||hist[0];
           var rot=(v.twist/100)*q*q*(v.mode==='vortex'?3.2:.65)*Math.PI+(v.drift/100)*Math.sin(t*.35+q*7)*.28;
@@ -2579,12 +2590,18 @@
           ctx.save();
           ctx.beginPath(); ctx.arc(localX,localY,Math.max(1,rad),0,Math.PI*2); ctx.clip();
           ctx.translate(localX,localY); ctx.rotate(rot);
-          var z=1.08+(v.aberration/100)*q*.09;
+          /* the overscan is only there to stop a ring tearing open at its
+             edges once it rotates, so it now follows how much rotation is
+             actually asked for. It was a flat 25% — which draws the frame
+             half again as large — and with a 1.08 scale on top the picture
+             sat about 1.6x zoomed in even with Twist and Drift at zero. */
+          var over=0.04+((v.twist+v.drift)/200)*0.30;
+          var z=1.0+(v.aberration/100)*q*.09;
           if(v.mode==='bloom') z+=q*.04;
           z+=Math.min(.16,Math.abs(Math.sin(rot))*.12);
           ctx.scale(z,z); ctx.translate(-localX,-localY);
           ctx.filter=filt(k,q); ctx.globalAlpha=v.mode==='bloom'?.82:1;
-          drawOverscan(fr,SW,SH,.25);
+          drawOverscan(fr,SW,SH,over);
           ctx.restore();
           ctx.save();
           ctx.globalAlpha=.13+.18*(v.aberration/100);
@@ -2661,7 +2678,8 @@
           x+=Math.cos(t*(.7+h1)+h1*18)*sp*dr*.7;y+=Math.sin(t*(.85+h2)+h2*22)*sp*dr*.7;
           var rad=v.mode==='portrait'?base*(.25+(1-L)*.95+edge*det*.9):v.mode==='pop'?base*(.62+edge*det*.38):v.mode==='swarm'?base*(.18+L*.56+edge*det*1.05):base*(.23+L*.94+edge*det*.72);
           rad=clamp(rad,sp*.08,sp*1.3);lx.fillStyle=colour(r,g,b,L,i,j);lx.globalAlpha=v.mode==='nebula'?.8+L*.2:.95;lx.beginPath();lx.arc(x,y,rad,0,Math.PI*2);lx.fill();
-          if((edge>.35||hash2(i+3,j+8)>.95)&&rad>2.5){lx.globalAlpha=.24;lx.strokeStyle='rgba(255,255,255,.8)';lx.lineWidth=Math.max(.5,rad*.08);lx.stroke();}
+          // the white outline some planets carried is gone — it read as a
+          // hard rim drawn on top rather than as part of the colour field
         }
         lx.globalAlpha=1;ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=bg;ctx.fillRect(0,0,stage.width,stage.height);
         var bl=v.bloom/100;if(bl>0){ctx.save();ctx.globalCompositeOperation=(v.mode==='portrait'||v.mode==='pop')?'multiply':'screen';ctx.globalAlpha=.12+bl*.42;if('filter' in ctx)ctx.filter='blur('+Math.round((2+bl*12)*DPR)+'px) saturate('+(1.2+bl*1.4)+')';ctx.drawImage(layer.c,0,0);ctx.restore();}
@@ -2952,7 +2970,7 @@
   (function(){
     var RING=26, ring=[], head=0, t=0, RW=0, RH=0;
     var cx=0.5, cy=0.5, tx=0.5, ty=0.5;   // the point it folds into
-    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:65, twist:0, delay:2, tint:22, ghost:0 };
+    var v={ screens:'one', shape:'rect', dir:'in', loops:13, depth:55, twist:0, delay:6, tint:0, ghost:0 };
 
     function build(){
       RW=Math.max(2,Math.round(stage.width*0.5));
@@ -3002,9 +3020,9 @@
       ctx.drawImage(src,0,0,src.width,src.height,0,0,SW,SH);
       if(typeof ctx.filter==='string') ctx.filter='none';
       ctx.globalAlpha=1;
-      ctx.strokeStyle='rgba(255,255,255,.22)';
-      ctx.lineWidth=Math.max(1,SW/520);
-      ctx.strokeRect(0,0,SW,SH);
+      // each pass used to be outlined in white; the recursion reads perfectly
+      // well from the picture folding into itself, and the stacked outlines
+      // just laid a grid of hard lines over everything
       ctx.restore();
     }
 
@@ -3048,9 +3066,9 @@
             feedbackAt(px+Math.cos(ang)*r, py+Math.sin(ang)*r, sc*0.62, tw+ang*0.1);
           }
         }
-        // faint scanlines, as the original had
-        ctx.fillStyle='rgba(0,0,0,.05)';
-        for(var y2=0;y2<SH;y2+=6) ctx.fillRect(0,y2,SW,1);
+        /* the scanlines went too: a dark line every sixth row is re-fed into
+           the ring every frame, so each pass darkened and re-scanned the one
+           before it and the picture visibly degraded the deeper it recursed */
         // remember this frame for the next pass
         head=(head+1)%RING;
         var d=ring[head];
