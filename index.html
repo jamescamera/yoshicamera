@@ -619,6 +619,7 @@
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bRot">Rot the file</button>
+      <button class="b" id="bRotDir" style="display:none">Rot sideways</button>
       <button class="b" id="bGif">GIF size</button>
       <button class="b" id="bPhoto">Use a photo or video</button>
       <button class="b" id="bLive" style="display:none">Back to the lens</button>
@@ -7862,9 +7863,42 @@
     }
     return bytes;
   }
+  /* A JPEG is scanned left to right, top to bottom, so a propagating error
+     can only ever smear sideways — the direction is a property of the format,
+     not a setting. To get damage that runs down the picture instead, the
+     frame is encoded a quarter-turn over, so the scan runs down the upright
+     image, and an Exif Orientation tag tells viewers to turn it back. The
+     corruption stays genuine file damage; only the reading frame moves.
+     Anything that ignores Exif orientation will show the still on its side —
+     rare now, and the same tag phone cameras already rely on. */
+  function exifOrientationSegment(orientation){
+    var seg=[0xFF,0xE1,0x00,0x22, 0x45,0x78,0x69,0x66,0x00,0x00,   // APP1, "Exif\0\0"
+             0x49,0x49,0x2A,0x00, 0x08,0x00,0x00,0x00,             // little-endian TIFF header
+             0x01,0x00,                                            // one entry
+             0x12,0x01, 0x03,0x00, 0x01,0x00,0x00,0x00,            // tag 0x0112, SHORT, count 1
+             orientation&0xFF,0x00, 0x00,0x00,                     // the value
+             0x00,0x00,0x00,0x00];                                 // no next IFD
+    return seg;
+  }
+  function withExifOrientation(bytes, orientation){
+    var seg=exifOrientationSegment(orientation);
+    var out=new Uint8Array(bytes.length+seg.length);
+    out[0]=0xFF; out[1]=0xD8;                       // SOI first, then our APP1
+    out.set(seg,2);
+    out.set(bytes.subarray(2), 2+seg.length);
+    return out;
+  }
+  function quarterTurn(can){
+    var t=mk(can.height, can.width);
+    t.x.translate(can.height,0);
+    t.x.rotate(Math.PI/2);
+    t.x.drawImage(can,0,0);
+    return t.c;
+  }
   /* encode the frame as a genuine JPEG, damage the encoded bytes, save that */
-  function saveRottedJpeg(can, name, damage, depth, done, fail){
+  function saveRottedJpeg(can, name, damage, depth, vertical, done, fail){
     can=markedCopy(can);
+    if(vertical){ try { can=quarterTurn(can); } catch(e){ vertical=false; } }
     if(!can.toBlob){ if(fail) fail(); return; }
     can.toBlob(function(b){
       if(!b){ if(fail) fail(); return; }
@@ -7873,6 +7907,8 @@
         try {
           var bytes=new Uint8Array(fr.result);
           rotJpegBytes(bytes, damage, depth);
+          // 8 = turn a quarter back the other way when displaying
+          if(vertical) bytes=withExifOrientation(bytes, 8);
           var blob=new Blob([bytes],{type:'image/jpeg'});
           var u=URL.createObjectURL(blob);
           saveUrl(u,name);
@@ -7888,13 +7924,19 @@
      camera's arithmetic — every instrument can be written out as a damaged
      JPEG — so it lives beside the other save-format switches rather than in
      Bitrot's own controls. */
-  var ROT={ on:false, amount:45 };
+  var ROT={ on:false, amount:45, vertical:false };
   /* the one door every still goes out through, so the export switches apply
      wherever the shutter was pressed from */
   function saveStillCanvas(can, name){
     if(ROT.on){
       var a=ROT.amount/100;
-      saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, 0.55+a*0.42,
+      /* how far up the picture the damage may start. Nothing recovers once
+         an error is in the chain, so this — not the number of damaged bytes —
+         is what actually decides how much of the frame survives. It used to
+         floor at 0.55, which meant even File damage 1 exposed the bottom
+         half; tracking the setting directly makes 1 a sliver at the bottom
+         edge and 100 the whole frame. */
+      saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, Math.pow(a,0.85), ROT.vertical,
         function(size){ toast('Rotted JPEG · '+Math.round(size/1024)+'KB — the damage is in the file'); },
         function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
       return;
@@ -8024,13 +8066,16 @@
 
   (function(){
     var bh=document.getElementById('bHdr'), bm=document.getElementById('bMask');
-    var br=document.getElementById('bRot');
+    var br=document.getElementById('bRot'), bd=document.getElementById('bRotDir');
     var rf=document.getElementById('rotField'), ra=document.getElementById('rotAmt'), rv=document.getElementById('rotVal');
     function sync(){
       bh.className=HDR.v.on?'b on':'b';
       bm.className=HDR.v.mask?'b on':'b';
       bm.style.display=HDR.v.on?'':'none';
       br.className=ROT.on?'b on':'b';
+      bd.style.display=ROT.on?'':'none';
+      bd.className=ROT.vertical?'b on':'b';
+      bd.textContent=ROT.vertical?'Rot downward':'Rot sideways';
       rf.style.display=ROT.on?'':'none';
       rv.textContent=ROT.amount;
       buildHardware();
@@ -8058,6 +8103,12 @@
       sync();
       toast(ROT.on ? 'Stills save as a damaged JPEG \u00b7 the rot is in the file itself'
                    : 'Back to clean stills');
+    });
+    bd.addEventListener('click', function(){
+      ROT.vertical=!ROT.vertical;
+      sync();
+      toast(ROT.vertical ? 'Damage will run down the picture · saved with an orientation tag'
+                         : 'Damage will run across the picture');
     });
     ra.addEventListener('input', function(){
       ROT.amount=Math.max(1,Math.min(100,parseInt(this.value,10)||45));
