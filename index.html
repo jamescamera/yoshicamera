@@ -620,6 +620,7 @@
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bRot">Rot the file</button>
       <button class="b" id="bRotDir" style="display:none">Rot sideways</button>
+      <button class="b" id="bRotRaw" style="display:none">Raw broken file</button>
       <button class="b" id="bGif">GIF size</button>
       <button class="b" id="bPhoto">Use a photo or video</button>
       <button class="b" id="bLive" style="display:none">Back to the lens</button>
@@ -7895,6 +7896,93 @@
     t.x.drawImage(can,0,0);
     return t.c;
   }
+  function quarterTurnBack(can){
+    var t=mk(can.height, can.width);
+    t.x.translate(0,can.width);
+    t.x.rotate(-Math.PI/2);
+    t.x.drawImage(can,0,0);
+    return t.c;
+  }
+  function decodeJpegBytes(bytes, ok, bad){
+    var u=URL.createObjectURL(new Blob([bytes],{type:'image/jpeg'})), im=new Image();
+    im.onload=function(){ ok(im,u); };
+    im.onerror=function(){ try{ URL.revokeObjectURL(u); }catch(e){} if(bad) bad(); };
+    im.src=u;
+  }
+  /* ---------- rot that recovers, and that you can actually send someone ----------
+     Damaging the bytes of one JPEG has two problems you only see once you
+     use it. A browser-encoded JPEG has no restart markers, so an error can
+     never recover: the picture is clean above the first damaged byte and
+     destroyed all the way to the bottom, which is a split rather than a
+     glitch. And the file, being genuinely broken, is refused or mangled by
+     plenty of the places you would want to send it.
+
+     So the damage is done several times over instead of once. The frame is
+     encoded, and for each horizontal band a separate copy is damaged
+     starting at that band's own top edge, decoded, and only that band's
+     strip is kept. Every band therefore shows real corruption that ran into
+     it, and the next band starts clean — the recovery that restart markers
+     would have given, produced by using several runs instead of one. Bands
+     left undamaged keep the photograph, so the wreckage is interleaved with
+     it rather than replacing everything below a line.
+
+     The result is composited and saved as an ordinary still. The corruption
+     is still genuine — every pixel of it came out of a real damaged JPEG —
+     but it now lives in the pixels, so the file opens, uploads and shares
+     anywhere. Raw mode below keeps the actual broken file for anyone who
+     wants the artefact itself rather than a picture of it. */
+  function saveRottedComposite(can, name, damage, vertical, done, fail){
+    can=markedCopy(can);
+    var work=can;
+    if(vertical){ try { work=quarterTurn(can); } catch(e){ vertical=false; work=can; } }
+    if(!work.toBlob){ if(fail) fail(); return; }
+    work.toBlob(function(b){
+      if(!b){ if(fail) fail(); return; }
+      var fr=new FileReader();
+      fr.onerror=function(){ if(fail) fail(); };
+      fr.onload=function(){
+        try {
+          var base=new Uint8Array(fr.result);
+          var Wt=work.width, Ht=work.height;
+          var BANDS=Math.max(4, Math.min(10, Math.round(4+damage*6)));
+          var out=mk(Wt,Ht), urls=[], hit=[], todo=0, i;
+          for(i=0;i<BANDS;i++){
+            // the top band always survives, so the picture still announces itself
+            var h=(i>0) && (Math.random() < 0.25+damage*0.7);
+            hit.push(h); if(h) todo++;
+          }
+          function finish(){
+            var fin = vertical ? quarterTurnBack(out.c) : out.c;
+            savePlain(fin, name);
+            for(var k=0;k<urls.length;k++)(function(u){
+              setTimeout(function(){ try{ URL.revokeObjectURL(u); }catch(e){} },60000);
+            })(urls[k]);
+            if(done) done();
+          }
+          decodeJpegBytes(base.slice(0), function(cleanIm,cu){
+            urls.push(cu);
+            out.x.drawImage(cleanIm,0,0,Wt,Ht);
+            if(!todo){ finish(); return; }
+            for(var j=0;j<BANDS;j++){
+              if(!hit[j]) continue;
+              (function(idx){
+                var copy=base.slice(0);
+                // damage enters the chain at this band's own top edge
+                rotJpegBytes(copy, 0.05+damage*0.35, 1-(idx/BANDS));
+                decodeJpegBytes(copy, function(im,u){
+                  urls.push(u);
+                  var y0=Math.floor(idx*Ht/BANDS), y1=Math.floor((idx+1)*Ht/BANDS);
+                  try { out.x.drawImage(im, 0,y0, Wt, y1-y0, 0,y0, Wt, y1-y0); } catch(e){}
+                  if(--todo<=0) finish();
+                }, function(){ if(--todo<=0) finish(); });
+              })(j);
+            }
+          }, function(){ if(fail) fail(); });
+        } catch(e){ if(fail) fail(); }
+      };
+      fr.readAsArrayBuffer(b);
+    }, 'image/jpeg', 0.92);
+  }
   /* encode the frame as a genuine JPEG, damage the encoded bytes, save that */
   function saveRottedJpeg(can, name, damage, depth, vertical, done, fail){
     can=markedCopy(can);
@@ -7924,20 +8012,23 @@
      camera's arithmetic — every instrument can be written out as a damaged
      JPEG — so it lives beside the other save-format switches rather than in
      Bitrot's own controls. */
-  var ROT={ on:false, amount:45, vertical:false };
+  var ROT={ on:false, amount:45, vertical:false, raw:false };
   /* the one door every still goes out through, so the export switches apply
      wherever the shutter was pressed from */
   function saveStillCanvas(can, name){
     if(ROT.on){
       var a=ROT.amount/100;
-      /* how far up the picture the damage may start. Nothing recovers once
-         an error is in the chain, so this — not the number of damaged bytes —
-         is what actually decides how much of the frame survives. It used to
-         floor at 0.55, which meant even File damage 1 exposed the bottom
-         half; tracking the setting directly makes 1 a sliver at the bottom
-         edge and 100 the whole frame. */
-      saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, Math.pow(a,0.85), ROT.vertical,
-        function(size){ toast('Rotted JPEG · '+Math.round(size/1024)+'KB — the damage is in the file'); },
+      if(ROT.raw){
+        /* the actual broken file. How far up the damage may start is what
+           decides how much survives — nothing recovers once an error is in
+           the chain — so this tracks the setting directly. */
+        saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, Math.pow(a,0.85), ROT.vertical,
+          function(size){ toast('Raw rotted JPEG · '+Math.round(size/1024)+'KB — broken on purpose, some apps will refuse it'); },
+          function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
+        return;
+      }
+      saveRottedComposite(can, name.replace(/\.[^.]+$/,'')+'.png', a, ROT.vertical,
+        function(){ toast('Rotted still saved — damaged for real, but shareable'); },
         function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
       return;
     }
@@ -8067,6 +8158,7 @@
   (function(){
     var bh=document.getElementById('bHdr'), bm=document.getElementById('bMask');
     var br=document.getElementById('bRot'), bd=document.getElementById('bRotDir');
+    var bw=document.getElementById('bRotRaw');
     var rf=document.getElementById('rotField'), ra=document.getElementById('rotAmt'), rv=document.getElementById('rotVal');
     function sync(){
       bh.className=HDR.v.on?'b on':'b';
@@ -8076,6 +8168,8 @@
       bd.style.display=ROT.on?'':'none';
       bd.className=ROT.vertical?'b on':'b';
       bd.textContent=ROT.vertical?'Rot downward':'Rot sideways';
+      bw.style.display=ROT.on?'':'none';
+      bw.className=ROT.raw?'b on':'b';
       rf.style.display=ROT.on?'':'none';
       rv.textContent=ROT.amount;
       buildHardware();
@@ -8109,6 +8203,12 @@
       sync();
       toast(ROT.vertical ? 'Damage will run down the picture · saved with an orientation tag'
                          : 'Damage will run across the picture');
+    });
+    bw.addEventListener('click', function(){
+      ROT.raw=!ROT.raw;
+      sync();
+      toast(ROT.raw ? 'Saving the actual broken file — some apps will refuse to open or upload it'
+                    : 'Saving a shareable still with the damage baked into the pixels');
     });
     ra.addEventListener('input', function(){
       ROT.amount=Math.max(1,Math.min(100,parseInt(this.value,10)||45));
