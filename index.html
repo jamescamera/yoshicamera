@@ -2145,9 +2145,14 @@
     }
     function ensureHist(){
       if(histReady||!srcC.c.width) return;
-      var w=480, h=Math.round(480*(srcC.c.height/srcC.c.width)), i;
+      var w=480, h=Math.round(480*(srcC.c.height/srcC.c.width)), i, b;
       hist=[];
-      for(i=0;i<HN;i++) hist.push(mk(w,h));
+      // filled with the frame on hand right away, rather than left blank —
+      // roughly half of every fresh build's cells reference a lagged
+      // history slot (Lag defaults to 50, not 0), and Fold isn't warmed up
+      // over several frames before a still, so blank slots read as the
+      // weave having whole cells missing rather than one still-uniform frame
+      for(i=0;i<HN;i++){ b=mk(w,h); b.x.drawImage(srcC.c,0,0,w,h); hist.push(b); }
       hi=0; histReady=true;
     }
     function frameAt(back){
@@ -2169,8 +2174,14 @@
       ],
       init:build, size:build,
       frame:function(){
-        var vw=Math.min(960, vid.videoWidth||640);
-        if(!grabInto(srcC, vw, Math.round(vw*0.75))) return;
+        // reads the live camera's own width directly and assumes a fixed
+        // 4:3 shape regardless of the real source — on a loaded photo the
+        // camera stream isn't necessarily what's showing, and a portrait
+        // photo got cropped down hard to fit a landscape buffer. W/H track
+        // whatever the current source actually is, live feed or a photo.
+        var vw=Math.min(960, Math.max(64, Math.round(W||640)));
+        var vh=Math.max(2, Math.round(vw*(H/Math.max(W,1))));
+        if(!grabInto(srcC, vw, vh)) return;
         ensureHist();
         if(v.lag>0 && histReady && !held){
           hist[hi].x.drawImage(srcC.c,0,0,hist[hi].c.width,hist[hi].c.height);
