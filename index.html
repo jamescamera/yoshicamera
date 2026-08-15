@@ -6135,6 +6135,110 @@
     });
   })();
 
+  /* ---------------- BITROT — a corrupted-file camera ----------------
+     A JPEG never stores a block's brightness outright. It stores the
+     difference from the block before it, walking the picture in scan
+     order, and only resets that running total at a restart marker. So one
+     damaged value is never local: every block after it inherits the error
+     and keeps the wrong colour until the next reset. That is why a rotted
+     photograph smears sideways in long bands instead of speckling, and it
+     is the actual mechanism here rather than a drawing of it — the chain
+     is walked, damaged, and allowed to propagate. A damaged block can also
+     cost the decoder its byte alignment, so the rest of that run slides
+     sideways; channel split and torn scanlines ride along on top. */
+  (function(){
+    var src=mk(), out=mk(), img=null, RW=0, RH=0, BW=0, BH=0, blk=16, lastDraw=0;
+    var v={ mode:'drift', damage:38, smear:62, split:34, tear:30, block:16 };
+
+    function sizeFor(){
+      var b=Math.max(8, Math.round(v.block/8)*8);
+      var wide=W||360, tall=H||640;
+      var target=SLOW_DEVICE?(LOW_MEMORY?184:248):Math.max(232,Math.min(460,Math.round(wide*0.62)));
+      var bw=Math.max(4, Math.round(target/b));
+      var rw=bw*b;
+      var bh=Math.max(3, Math.round(rw*(tall/Math.max(wide,1))/b));
+      var rh=bh*b;
+      if(b!==blk || rw!==RW || rh!==RH){
+        blk=b; RW=rw; RH=rh; BW=bw; BH=bh;
+        src.c.width=RW; src.c.height=RH;
+        out.c.width=RW; out.c.height=RH;
+        img=out.x.createImageData(RW,RH);
+      }
+    }
+    function build(){ sizeFor(); }
+    reg({
+      id:'bitrot', name:'Bitrot', line:'A corrupted-file camera',
+      note:'The running total a JPEG keeps as it walks the picture, damaged on purpose. Corruption sets how often a value is hit; Smear sets how far the error runs before a restart marker clears it, so low Smear speckles and high Smear drags whole bands across the frame. Held freezes one pattern of damage, Drift lets it crawl, Burst tears it apart continuously.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'mode',label:'Damage',opts:[['drift','Drift'],['burst','Burst'],['still','Held']]},
+        {t:'sld',k:'damage',label:'Corruption',min:0,max:100},
+        {t:'sld',k:'smear',label:'Smear',min:0,max:100},
+        {t:'sld',k:'split',label:'Channel split',min:0,max:100},
+        {t:'sld',k:'tear',label:'Tear',min:0,max:100},
+        {t:'sld',k:'block',label:'Block size',min:8,max:48,step:8,rebuild:true}
+      ],
+      init:build, size:build,
+      frame:function(){
+        var stamp=now();
+        if(SLOW_DEVICE && stamp-lastDraw<52) return;
+        lastDraw=stamp;
+        sizeFor();
+        if(!grabInto(src,RW,RH)) return;
+        var sd=src.x.getImageData(0,0,RW,RH).data, o=img.data;
+        var t=stamp*0.001;
+        var dmg=v.damage/100, hold=v.smear/100;
+        /* restart markers: the whole reason corruption reads as bands. Far
+           apart (high Smear) and one bad value discolours most of a row */
+        var restartEvery=Math.max(1, Math.round(1+hold*(BW-1)));
+        var splitPx=Math.round((v.split/100)*blk*1.1);
+        var tearPx=(v.tear/100)*RW*0.16;
+        // Held holds one pattern still; Burst re-rolls the damage fast
+        var tk=(v.mode==='still')?0:Math.floor(t*(v.mode==='burst'?6:1.4));
+        var bx,by,x,y,q,eY,eCb,eCr,shift,dR,dG,dB,rowTear,base,x0,x1,y0,y1;
+        for(by=0;by<BH;by++){
+          eY=0; eCb=0; eCr=0; shift=0;
+          y0=by*blk; y1=y0+blk;
+          for(bx=0;bx<BW;bx++){
+            if((bx%restartEvery)===0){ eY=0; eCb=0; eCr=0; shift=0; }
+            if(hash2(bx*13+by*29+1, tk+by*3+1) < dmg*0.10){
+              // a damaged difference enters the running total and stays in it
+              eY += (hash2(bx+3, by+11+tk)-0.5)*200*dmg;
+              eCb+= (hash2(bx+17,by+5 +tk)-0.5)*250*dmg;
+              eCr+= (hash2(bx+23,by+31+tk)-0.5)*250*dmg;
+              // and can cost the decoder its alignment for the rest of the run
+              if(hash2(bx+41,by+13+tk) < dmg*0.45) shift+=Math.round((hash2(bx+7,by+3+tk)-0.5)*blk*3);
+            }
+            /* the error lives in YCbCr, where JPEG keeps it — converting it
+               once per block gives the constant RGB shift for every pixel in
+               that block, which is exactly what a wrong DC term does */
+            dR=eY + 1.402*eCr;
+            dG=eY - 0.344136*eCb - 0.714136*eCr;
+            dB=eY + 1.772*eCb;
+            x0=bx*blk; x1=x0+blk;
+            for(y=y0;y<y1;y++){
+              rowTear=tearPx>0 ? Math.round(Math.sin(y*0.7+tk*1.7)*((hash2(y,tk+7)<0.14)?tearPx:tearPx*0.05)) : 0;
+              base=y*RW;
+              for(x=x0;x<x1;x++){
+                q=(base+x)*4;
+                o[q]  =sd[(base+clamp(x-shift-rowTear+splitPx,0,RW-1))*4  ]+dR;
+                o[q+1]=sd[(base+clamp(x-shift-rowTear,0,RW-1))*4+1]+dG;
+                o[q+2]=sd[(base+clamp(x-shift-rowTear-splitPx,0,RW-1))*4+2]+dB;
+                o[q+3]=255;
+              }
+            }
+          }
+        }
+        out.x.putImageData(img,0,0);
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+        ctx.imageSmoothingEnabled=false;
+        ctx.drawImage(out.c,0,0,stage.width,stage.height);
+        hSub.textContent=BW+'×'+BH+' blocks · '+blk+'px · '+v.mode;
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
@@ -6213,7 +6317,8 @@
     vhs:['255,74,52','#07070A'], potato:['144,198,80','#10100B'], ribbon:['120,214,255','#060A0E'], psyche:['255,92,122','#0B0613'], warhol:['255,98,110','#F0E6D1'], liquid:['83,220,208','#070817'], chroma:['166,112,255','#070813'],
     newsprint:['58,44,34','#F2ECD9'], lyrics:['138,118,255','#090813'], ascii:['123,255,166','#08100A'], emoji:['255,208,78','#0A0B10'], lifeform:['111,255,176','#06080D'], onebit:['238,236,229','#0B0B0D'],
     veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
-    polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806']
+    polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806'],
+    bitrot:['255,72,140','#08060A']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){
