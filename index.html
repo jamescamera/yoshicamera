@@ -6148,7 +6148,8 @@
      sideways; channel split and torn scanlines ride along on top. */
   (function(){
     var src=mk(), out=mk(), img=null, RW=0, RH=0, BW=0, BH=0, blk=16, lastDraw=0;
-    var v={ mode:'drift', damage:38, smear:62, split:34, tear:30, block:16 };
+    var v={ mode:'drift', damage:38, smear:62, split:34, tear:30, block:16,
+            save:'png', filerot:45 };
 
     function sizeFor(){
       var b=Math.max(8, Math.round(v.block/8)*8);
@@ -6176,9 +6177,22 @@
         {t:'sld',k:'smear',label:'Smear',min:0,max:100},
         {t:'sld',k:'split',label:'Channel split',min:0,max:100},
         {t:'sld',k:'tear',label:'Tear',min:0,max:100},
-        {t:'sld',k:'block',label:'Block size',min:8,max:48,step:8,rebuild:true}
+        {t:'sld',k:'block',label:'Block size',min:8,max:48,step:8,rebuild:true},
+        {t:'seg',k:'save',label:'Shutter saves',opts:[['png','Clean PNG'],['rot','Rotted JPEG']]},
+        {t:'sld',k:'filerot',label:'File damage',min:1,max:100}
       ],
       init:build, size:build,
+      /* Rotted JPEG saves a genuinely damaged file rather than a clean
+         picture of damage — the rot is in the bytes, so every viewer that
+         opens it decodes its own version, and it cannot be undone by
+         re-saving. Clean PNG is the ordinary lossless still. */
+      saveStill:function(can){
+        if(v.save!=='rot') return false;
+        saveRottedJpeg(can, fileName(null,'jpg'), v.filerot/100, 0.55+(v.filerot/100)*0.42,
+          function(size){ toast('Rotted JPEG · '+Math.round(size/1024)+'KB — damage is in the file'); },
+          function(){ saveCanvas(can, fileName(null,'png')); toast('Could not rot it — saved clean'); });
+        return true;
+      },
       frame:function(){
         var stamp=now();
         if(SLOW_DEVICE && stamp-lastDraw<52) return;
@@ -7792,10 +7806,89 @@
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     } else { window.open(url,'_blank'); }
   }
+
+  /* ---------- rotting a real JPEG, in the file rather than in the pixels ----------
+     Damage the bytes of an encoded JPEG and the corruption is no longer a
+     drawing of corruption: it is in the file, and every decoder that opens
+     it works out its own version of the wreckage.
+
+     What must survive, or the file simply will not open anywhere:
+       · everything before the start-of-scan marker — the quantisation
+         tables, Huffman tables and frame header a decoder needs to make
+         sense of any of it,
+       · the two-byte end-of-image marker,
+       · 0xFF as a value. Inside entropy-coded data 0xFF always introduces
+         a marker unless it is followed by a stuffed 0x00, so writing a
+         stray 0xFF, or clobbering an existing 0xFF/0x00 pair, makes
+         decoders stop early and hand back a truncated or refused image
+         rather than a glitched one.
+     So only the entropy-coded scan is touched, never with 0xFF, and never
+     over a byte adjacent to one. */
+  function rotJpegBytes(bytes, damage, depth){
+    var n=bytes.length, i=2, marker, len, sos=-1;
+    if(n<32 || bytes[0]!==0xFF || bytes[1]!==0xD8) return bytes;   // not a JPEG
+    while(i<n-3){
+      if(bytes[i]!==0xFF){ i++; continue; }
+      marker=bytes[i+1];
+      if(marker===0xFF){ i++; continue; }                          // fill byte
+      if(marker===0x01 || (marker>=0xD0 && marker<=0xD7)){ i+=2; continue; }
+      len=(bytes[i+2]<<8)|bytes[i+3];
+      if(len<2) break;
+      if(marker===0xDA){ sos=i+2+len; break; }                     // scan starts here
+      i+=2+len;
+    }
+    if(sos<0 || sos>=n-4) return bytes;
+    var end=n-2;                                                   // keep the EOI
+    /* Start the damage part-way in. A canvas JPEG carries no restart
+       markers, so an error never recovers — it runs to the bottom of the
+       picture. Beginning further down is what leaves any of the photograph
+       standing above the wreck. */
+    var from=sos+Math.floor((end-sos)*(1-clamp(depth,0,1)));
+    var span=end-from;
+    if(span<32) return bytes;
+    var hits=Math.max(1, Math.round(span*damage*0.0006));
+    var seed=(Date.now()>>>0)^span, p, b, k;
+    function rnd(){ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; }
+    for(k=0;k<hits;k++){
+      p=from+Math.floor(rnd()*span);
+      if(p<=sos || p>=end) continue;
+      if(bytes[p]===0xFF || bytes[p-1]===0xFF || bytes[p+1]===0xFF) continue;
+      b=Math.floor(rnd()*255);                                     // 0..254, never 0xFF
+      if(b===0xFF) b=0xFE;
+      bytes[p]=b;
+    }
+    return bytes;
+  }
+  /* encode the frame as a genuine JPEG, damage the encoded bytes, save that */
+  function saveRottedJpeg(can, name, damage, depth, done, fail){
+    can=markedCopy(can);
+    if(!can.toBlob){ if(fail) fail(); return; }
+    can.toBlob(function(b){
+      if(!b){ if(fail) fail(); return; }
+      var fr=new FileReader();
+      fr.onload=function(){
+        try {
+          var bytes=new Uint8Array(fr.result);
+          rotJpegBytes(bytes, damage, depth);
+          var blob=new Blob([bytes],{type:'image/jpeg'});
+          var u=URL.createObjectURL(blob);
+          saveUrl(u,name);
+          setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} }, 60000);
+          if(done) done(blob.size);
+        } catch(e){ if(fail) fail(); }
+      };
+      fr.onerror=function(){ if(fail) fail(); };
+      fr.readAsArrayBuffer(b);
+    }, 'image/jpeg', 0.92);
+  }
   function shotNow(){
     var c=CAMS[cur];
     if(c && c.shoot){ c.shoot(); return; }
     shutterFlash();
+    /* saveStill lets a camera write its own kind of file while still going
+       through the ordinary full-resolution develop above it — unlike shoot,
+       which takes over the whole shutter and skips that */
+    if(c && c.saveStill && c.saveStill(sourceCanvas())!==false) return;
     saveCanvas(sourceCanvas(), fileName(null,'png'));
     toast('Still saved');
   }
