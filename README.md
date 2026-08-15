@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 38 instruments. Swipe left or right (or use the
+The rack currently holds 31 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -34,7 +34,6 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Riot | A graphic poster camera |
 | Halo | A touch-bent time lens |
 | Prism | A colour constellation camera |
-| Riptide | A fluid-time camera |
 | Litho | A living topographic camera |
 | Interference | A moiré camera |
 | Shatter | A glass camera |
@@ -44,23 +43,17 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Ribbon | One line per moment |
 | VHS | A magnetic tape camcorder |
 | Potato | A camera from a worse phone |
-| Polygon | A low-poly console camera |
-| Psyche | A hallucinogenic screen-print camera |
-| Warhol | A silkscreen quad camera |
-| Liquid Light | A living oil-projector camera |
-| Chroma Type | A colour-word camera |
-| Newsprint | A newspaper-word camera |
-| Lyrics | A refrain camera |
 | ASCII Deluxe | A high-detail character camera |
-| Emoji | A pixel-face emoji camera |
 | Lifeform | A cellular automata camera |
 | Veil | An ink-band camera |
 | Fresco | A painterly glitch camera |
-| Current | A motion-field camera |
 | Colony | A friend-and-enemy camera |
 | Afterimage | An accumulated exposure camera |
 | Glass | A pane in front of the scene |
 | Bokeh | A bokeh-and-sparkle camera |
+| Bitrot | A corrupted-file camera |
+| Ink → VHS | A stacked-effect prototype |
+| Mosaic → Rain | A stacked-effect prototype |
 
 Gamut is the founding camera and the one described in detail below; every
 other instrument is its own algorithm with its own sliders, living in the
@@ -111,7 +104,7 @@ bijection between pixels and colours, not an approximation. The whole thing
 runs in about 10 milliseconds a frame using a precomputed lookup table and a
 two-pass radix sort.
 
-The other 37 cameras each implement their own transform the same way —
+The other 30 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -143,7 +136,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 37 cameras. In Gamut specifically, surfaces look coherent
+in any of the 31 cameras. In Gamut specifically, surfaces look coherent
 because the transform is very nearly a pure function of colour applied
 globally — pixels sharing an input colour land about 8× tighter together
 than the frame's overall spread, wherever they are in the picture. Real
