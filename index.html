@@ -6273,6 +6273,148 @@
     });
   })();
 
+  /* ---------------- THREAD — one line, never lifted ----------------
+     The whole picture is drawn with a single unbroken stroke. There is no
+     shading and no second pass: tone is only ever how close the line comes
+     to itself, so the thread crowds where the picture is dark and opens out
+     where it is light, and a black region is simply where the line has run
+     out of room to avoid itself.
+
+     Two things make that possible live.
+
+     Where to go: the line has to visit dark places more often, so points are
+     drawn from a fixed Halton set — progressive, so any prefix of it is
+     still evenly spread — and each one carries a fixed threshold it must
+     beat to be included. Keeping the candidates and their thresholds still
+     between frames is what stops the drawing boiling: as the picture
+     changes, points fade in and out of the thread instead of the whole set
+     being scattered anew every frame.
+
+     What order to go in: sorted by their position along a Hilbert curve,
+     which is continuous and space-filling, so consecutive points are always
+     near neighbours and the line never has to leap across the frame. That
+     ordering depends only on where the candidates are, not on the picture,
+     so it is computed once at build and never again — the per-frame work is
+     just deciding who is in.
+
+     Gamut walks a Hilbert curve through colour to give every pixel its own
+     shade; this walks one through space to give every shade one pen. */
+  (function(){
+    var src=mk(), RW=150, RH=200, lum=null;
+    var cx=null, cy=null, ct=null, cr=null, NC=0, builtFor='';
+    var v={ ink:'pen', points:62000, weight:22, bite:52, flow:60 };
+
+    function halton(i,b){ var f=1,r=0; while(i>0){ f/=b; r+=f*(i%b); i=Math.floor(i/b); } return r; }
+    /* position along a Hilbert curve of the given order — the classic
+       xy->d walk, halving the square and rotating into the right quadrant */
+    function hilbertD(order,x,y){
+      var rx,ry,d=0,s,t;
+      for(s=(1<<order)>>1; s>0; s>>=1){
+        rx=(x&s)>0?1:0; ry=(y&s)>0?1:0;
+        d+=s*s*((3*rx)^ry);
+        if(ry===0){
+          if(rx===1){ x=s-1-x; y=s-1-y; }
+          t=x; x=y; y=t;
+        }
+      }
+      return d;
+    }
+    function build(){
+      RW=SLOW_DEVICE?(LOW_MEMORY?110:130):Math.max(120,Math.min(200,Math.round((W||360)*0.42)));
+      RH=Math.max(40,Math.round(RW*((H||640)/Math.max(W||360,1))));
+      src.c.width=RW; src.c.height=RH;
+      lum=new Float32Array(RW*RH);
+      /* the thread has to be long enough that neighbouring stitches nearly
+         touch in the dark, or the line reads as scribble rather than as the
+         picture — and a sparse set also leaves the Hilbert walk making long
+         spikes between quadrants, because consecutive points are only near
+         each other when there are enough of them */
+      var want=SLOW_DEVICE?(LOW_MEMORY?26000:48000):120000;
+      if(builtFor===want+'') return;         // the candidate field never changes
+      builtFor=want+'';
+      NC=want;
+      var ORD=10, N2=1<<ORD;
+      var hx=new Float64Array(NC), hy=new Float64Array(NC), hd=new Float64Array(NC), idx=new Array(NC), i;
+      for(i=0;i<NC;i++){
+        hx[i]=halton(i+1,2); hy[i]=halton(i+1,3);
+        hd[i]=hilbertD(ORD, Math.min(N2-1,(hx[i]*N2)|0), Math.min(N2-1,(hy[i]*N2)|0));
+        idx[i]=i;
+      }
+      idx.sort(function(a,b){ return hd[a]-hd[b]; });    // once, at build
+      cx=new Float32Array(NC); cy=new Float32Array(NC);
+      ct=new Float32Array(NC); cr=new Int32Array(NC);
+      for(i=0;i<NC;i++){
+        var k=idx[i];
+        cx[i]=hx[k]; cy[i]=hy[k];
+        ct[i]=hash2(k+1,k*7+3);      // this candidate's fixed threshold
+        cr[i]=k;                     // and its place in the progressive sequence
+      }
+    }
+    function palette(){
+      if(v.ink==='chalk') return ['#14161A','238,236,230'];
+      if(v.ink==='biro')  return ['#F4F2EA','28,48,140'];
+      if(v.ink==='red')   return ['#F5F0E8','170,32,28'];
+      return ['#F2EEE4','24,22,20'];
+    }
+    reg({
+      id:'thread', name:'Thread', line:'One line, never lifted',
+      note:'A single unbroken stroke draws the whole frame. Nothing is shaded — the only way the picture can be dark is for the line to crowd against itself, so tone is entirely a matter of how much room the thread has. Points are chosen by darkness and then walked in Hilbert order, which is what keeps one line able to reach all of them without ever jumping.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'ink',label:'Ink',opts:[['pen','Pen'],['chalk','Chalk'],['biro','Biro'],['red','Red']]},
+        {t:'sld',k:'points',label:'Thread length',min:2000,max:120000,step:1000},
+        {t:'sld',k:'weight',label:'Line weight',min:1,max:100},
+        {t:'sld',k:'bite',label:'Bite',min:0,max:100},
+        {t:'sld',k:'flow',label:'Flow',min:0,max:100}
+      ],
+      init:build, size:build,
+      frame:function(){
+        if(!cx) build();
+        if(!grabInto(src,RW,RH)) return;
+        var d=src.x.getImageData(0,0,RW,RH).data, n=RW*RH, i, o;
+        /* the separation between light and dark has to be steep. A shallow
+           curve leaves the background almost as densely stitched as the
+           subject, and the whole frame reads as one texture rather than as
+           a picture — the tone only appears once light areas drop to almost
+           no stitches and the line crosses them in long runs instead. */
+        var g=0.8+(v.bite/100)*2.2;                      // darkness gamma
+        for(i=0;i<n;i++){ o=i*4; lum[i]=Math.pow(1-(0.2126*d[o]+0.7152*d[o+1]+0.0722*d[o+2])/255, g); }
+
+        var SW=stage.width, SH=stage.height, pal=palette();
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        ctx.fillStyle=pal[0]; ctx.fillRect(0,0,SW,SH);
+
+        var want=Math.max(200, Math.min(NC, v.points|0));
+        var smooth=v.flow/100, first=true, drawn=0;
+        var lx=0, ly=0, px, py, sx, sy, mx, my;
+        ctx.beginPath();                                  // one path
+        for(i=0;i<NC;i++){
+          if(cr[i]>=want) continue;                       // outside the chosen prefix
+          sx=cx[i]*RW; sy=cy[i]*RH;
+          o=(Math.min(RH-1,sy|0))*RW + Math.min(RW-1,sx|0);
+          if(lum[o]<=ct[i]) continue;                     // too light here for a stitch
+          px=cx[i]*SW; py=cy[i]*SH;
+          if(first){ ctx.moveTo(px,py); first=false; }    // ...and one moveTo, ever
+          else if(smooth>0){
+            /* corners rounded by curving to the midpoint of each step with
+               the previous stitch as the control point — pulling that control
+               back toward the midpoint straightens it again, so Flow runs
+               from a hard polyline to a properly cursive thread */
+            mx=(lx+px)*0.5; my=(ly+py)*0.5;
+            ctx.quadraticCurveTo(mx+(lx-mx)*smooth, my+(ly-my)*smooth, mx, my);
+          } else ctx.lineTo(px,py);
+          lx=px; ly=py; drawn++;
+        }
+        ctx.strokeStyle='rgba('+pal[1]+',0.92)';
+        ctx.lineWidth=Math.max(0.4, (v.weight/100)*Math.min(SW,SH)*0.004);
+        ctx.lineJoin='round'; ctx.lineCap='round';
+        ctx.stroke();                                     // one stroke
+        hSub.textContent=commas(drawn)+' stitches · one unbroken line';
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
@@ -6352,7 +6494,7 @@
     newsprint:['58,44,34','#F2ECD9'], lyrics:['138,118,255','#090813'], ascii:['123,255,166','#08100A'], emoji:['255,208,78','#0A0B10'], lifeform:['111,255,176','#06080D'], onebit:['238,236,229','#0B0B0D'],
     veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
     polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806'],
-    bitrot:['255,72,140','#08060A']
+    bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){
