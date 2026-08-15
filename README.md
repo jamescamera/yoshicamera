@@ -70,6 +70,15 @@ same file.
 - **Extra white.** Exports a still as an Ultra HDR JPEG — an ordinary SDR
   image with a gain map appended, so HDR screens can drive the highlights
   past white. A mask overlay (`Show mask`) previews which pixels will burn.
+- **Rot the file.** Saves the still as a genuinely damaged JPEG instead of
+  a clean PNG — the corruption is in the file's own bytes, not painted into
+  the picture, so every viewer that opens it decodes its own version of the
+  wreckage and re-saving cannot undo it. Works from any camera. Only the
+  entropy-coded scan is touched and never with a byte that could pass for a
+  marker, so the file still opens; because a browser-encoded JPEG carries no
+  restart markers, one damaged value runs to the bottom of the frame, which
+  is exactly why the damage falls in long bands. Mutually exclusive with
+  Extra white, whose gain map lives in the same bytes.
 - **A photo or video instead of a lens.** `Use a photo or video` runs every
   camera on a picture or clip you load, drag in, or paste, instead of the
   live feed — no camera needed. A loaded video loops continuously as the

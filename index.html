@@ -618,6 +618,7 @@
       <button class="b" id="bAspect">Screen</button>
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
+      <button class="b" id="bRot">Rot the file</button>
       <button class="b" id="bGif">GIF size</button>
       <button class="b" id="bPhoto">Use a photo or video</button>
       <button class="b" id="bLive" style="display:none">Back to the lens</button>
@@ -625,6 +626,10 @@
       <button class="b" id="bLook">Look</button>
       <button class="b" id="bClose">Close</button>
     </div>
+  </div>
+  <div class="field" id="rotField" style="display:none">
+    <label>File damage <b id="rotVal">45</b></label>
+    <input type="range" id="rotAmt" min="1" max="100" value="45" step="1">
   </div>
   <div class="field" id="vidScrubField" style="display:none">
     <label>Video position <b id="vidScrubVal">0:00 / 0:00</b></label>
@@ -6148,8 +6153,7 @@
      sideways; channel split and torn scanlines ride along on top. */
   (function(){
     var src=mk(), out=mk(), img=null, RW=0, RH=0, BW=0, BH=0, blk=16, lastDraw=0;
-    var v={ mode:'drift', damage:38, smear:62, split:34, tear:30, block:16,
-            save:'png', filerot:45 };
+    var v={ mode:'drift', damage:38, smear:62, split:34, tear:30, block:16 };
 
     function sizeFor(){
       var b=Math.max(8, Math.round(v.block/8)*8);
@@ -6177,22 +6181,9 @@
         {t:'sld',k:'smear',label:'Smear',min:0,max:100},
         {t:'sld',k:'split',label:'Channel split',min:0,max:100},
         {t:'sld',k:'tear',label:'Tear',min:0,max:100},
-        {t:'sld',k:'block',label:'Block size',min:8,max:48,step:8,rebuild:true},
-        {t:'seg',k:'save',label:'Shutter saves',opts:[['png','Clean PNG'],['rot','Rotted JPEG']]},
-        {t:'sld',k:'filerot',label:'File damage',min:1,max:100}
+        {t:'sld',k:'block',label:'Block size',min:8,max:48,step:8,rebuild:true}
       ],
       init:build, size:build,
-      /* Rotted JPEG saves a genuinely damaged file rather than a clean
-         picture of damage — the rot is in the bytes, so every viewer that
-         opens it decodes its own version, and it cannot be undone by
-         re-saving. Clean PNG is the ordinary lossless still. */
-      saveStill:function(can){
-        if(v.save!=='rot') return false;
-        saveRottedJpeg(can, fileName(null,'jpg'), v.filerot/100, 0.55+(v.filerot/100)*0.42,
-          function(size){ toast('Rotted JPEG · '+Math.round(size/1024)+'KB — damage is in the file'); },
-          function(){ saveCanvas(can, fileName(null,'png')); toast('Could not rot it — saved clean'); });
-        return true;
-      },
       frame:function(){
         var stamp=now();
         if(SLOW_DEVICE && stamp-lastDraw<52) return;
@@ -7753,7 +7744,11 @@
   }
   function shellFlash(){ shutterFlash(); }
   function shellSave(u,n){ saveUrl(u,n); }
-  function shellSaveCanvas(c,n){ saveCanvas(c,n); }
+  /* Gamut saves through here rather than through shotNow — it takes over the
+     whole shutter to develop its plate at the file's own size — so routing
+     this through the same helper is what keeps "rot the file" genuinely
+     app-wide instead of quietly skipping the founding camera. */
+  function shellSaveCanvas(c,n){ saveStillCanvas(c,n); }
   /* everything this app makes is called the same thing, so it groups in a
      camera roll: YoshiCamera-<camera>-<date>-<time>.<ext> */
   function fileName(tag,ext){
@@ -7881,16 +7876,29 @@
       fr.readAsArrayBuffer(b);
     }, 'image/jpeg', 0.92);
   }
+  /* Rotting the saved file is a property of the export, not of any one
+     camera's arithmetic — every instrument can be written out as a damaged
+     JPEG — so it lives beside the other save-format switches rather than in
+     Bitrot's own controls. */
+  var ROT={ on:false, amount:45 };
+  /* the one door every still goes out through, so the export switches apply
+     wherever the shutter was pressed from */
+  function saveStillCanvas(can, name){
+    if(ROT.on){
+      var a=ROT.amount/100;
+      saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, 0.55+a*0.42,
+        function(size){ toast('Rotted JPEG · '+Math.round(size/1024)+'KB — the damage is in the file'); },
+        function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
+      return;
+    }
+    saveCanvas(can, name);
+  }
   function shotNow(){
     var c=CAMS[cur];
     if(c && c.shoot){ c.shoot(); return; }
     shutterFlash();
-    /* saveStill lets a camera write its own kind of file while still going
-       through the ordinary full-resolution develop above it — unlike shoot,
-       which takes over the whole shutter and skips that */
-    if(c && c.saveStill && c.saveStill(sourceCanvas())!==false) return;
-    saveCanvas(sourceCanvas(), fileName(null,'png'));
-    toast('Still saved');
+    saveStillCanvas(sourceCanvas(), fileName(null,'png'));
+    if(!ROT.on) toast('Still saved');
   }
 
   /* Cameras that build up over time need a run-up before they are worth
@@ -8008,15 +8016,24 @@
 
   (function(){
     var bh=document.getElementById('bHdr'), bm=document.getElementById('bMask');
+    var br=document.getElementById('bRot');
+    var rf=document.getElementById('rotField'), ra=document.getElementById('rotAmt'), rv=document.getElementById('rotVal');
     function sync(){
       bh.className=HDR.v.on?'b on':'b';
       bm.className=HDR.v.mask?'b on':'b';
       bm.style.display=HDR.v.on?'':'none';
+      br.className=ROT.on?'b on':'b';
+      rf.style.display=ROT.on?'':'none';
+      rv.textContent=ROT.amount;
       buildHardware();
     }
     bh.addEventListener('click', function(){
       HDR.v.on=!HDR.v.on;
       if(!HDR.v.on){ HDR.v.mask=false; paintMask(); }
+      // Extra white writes its gain map into the JPEG it saves; damaging
+      // those bytes afterwards would leave the map unreadable, so the two
+      // export modes cannot both be on
+      if(HDR.v.on && ROT.on) ROT.on=false;
       sync();
       toast(HDR.v.on ? 'Highlights will burn past white \u00b7 saved as JPEG'
                      : 'Back to flat stills');
@@ -8026,6 +8043,17 @@
       if(!HDR.v.mask) paintMask();
       sync();
       openSheet(false);
+    });
+    br.addEventListener('click', function(){
+      ROT.on=!ROT.on;
+      if(ROT.on && HDR.v.on){ HDR.v.on=false; HDR.v.mask=false; paintMask(); }
+      sync();
+      toast(ROT.on ? 'Stills save as a damaged JPEG \u00b7 the rot is in the file itself'
+                   : 'Back to clean stills');
+    });
+    ra.addEventListener('input', function(){
+      ROT.amount=Math.max(1,Math.min(100,parseInt(this.value,10)||45));
+      rv.textContent=ROT.amount;
     });
     sync();
   })();
