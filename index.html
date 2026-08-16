@@ -6300,10 +6300,11 @@
      Gamut walks a Hilbert curve through colour to give every pixel its own
      shade; this walks one through space to give every shade one pen. */
   (function(){
-    var src=mk(), RW=150, RH=200, lum=null;
+    var src=mk(), RW=150, RH=200, lum=null, want=null;
     var cx=null, cy=null, ct=null, cr=null, NC=0, builtFor='';
-    var v={ ink:'pen', points:62000, weight:22, bite:52, flow:60 };
+    var v={ ink:'pen', points:62000, weight:22, bite:46, contour:62, snap:70, flow:60 };
 
+    var SNX=[-1,0,1,-1,1,-1,0,1], SNY=[-1,-1,-1,0,0,1,1,1];   // the eight neighbours
     function halton(i,b){ var f=1,r=0; while(i>0){ f/=b; r+=f*(i%b); i=Math.floor(i/b); } return r; }
     /* position along a Hilbert curve of the given order — the classic
        xy->d walk, halving the square and rotating into the right quadrant */
@@ -6324,15 +6325,16 @@
       RH=Math.max(40,Math.round(RW*((H||640)/Math.max(W||360,1))));
       src.c.width=RW; src.c.height=RH;
       lum=new Float32Array(RW*RH);
+      want=new Float32Array(RW*RH);
       /* the thread has to be long enough that neighbouring stitches nearly
          touch in the dark, or the line reads as scribble rather than as the
          picture — and a sparse set also leaves the Hilbert walk making long
          spikes between quadrants, because consecutive points are only near
          each other when there are enough of them */
-      var want=SLOW_DEVICE?(LOW_MEMORY?26000:48000):120000;
-      if(builtFor===want+'') return;         // the candidate field never changes
-      builtFor=want+'';
-      NC=want;
+      var cand=SLOW_DEVICE?(LOW_MEMORY?26000:48000):120000;
+      if(builtFor===cand+'') return;         // the candidate field never changes
+      builtFor=cand+'';
+      NC=cand;
       var ORD=10, N2=1<<ORD;
       var hx=new Float64Array(NC), hy=new Float64Array(NC), hd=new Float64Array(NC), idx=new Array(NC), i;
       for(i=0;i<NC;i++){
@@ -6365,6 +6367,8 @@
         {t:'sld',k:'points',label:'Thread length',min:2000,max:120000,step:1000},
         {t:'sld',k:'weight',label:'Line weight',min:1,max:100},
         {t:'sld',k:'bite',label:'Bite',min:0,max:100},
+        {t:'sld',k:'contour',label:'Contour',min:0,max:100},
+        {t:'sld',k:'snap',label:'Seek',min:0,max:100},
         {t:'sld',k:'flow',label:'Flow',min:0,max:100}
       ],
       init:build, size:build,
@@ -6380,21 +6384,55 @@
         var g=0.8+(v.bite/100)*2.2;                      // darkness gamma
         for(i=0;i<n;i++){ o=i*4; lum[i]=Math.pow(1-(0.2126*d[o]+0.7152*d[o+1]+0.0722*d[o+2])/255, g); }
 
+        /* Tone alone turns out to be a weak way to carry a scene: it gives
+           density but no structure, and the eye reads a picture off its
+           contours. So what the thread is really chasing is darkness plus
+           the local gradient — an edge is somewhere the line should want to
+           be even when the tone either side of it is mild. */
+        var con=(v.contour/100)*2.4, x2, y2, gx, gy, e;
+        for(y2=0;y2<RH;y2++) for(x2=0;x2<RW;x2++){
+          i=y2*RW+x2;
+          if(x2===0||y2===0||x2===RW-1||y2===RH-1){ want[i]=lum[i]; continue; }
+          gx=lum[i+1]-lum[i-1]; gy=lum[i+RW]-lum[i-RW];
+          e=Math.sqrt(gx*gx+gy*gy);
+          want[i]=Math.min(1.6, lum[i]+e*con);
+        }
+
         var SW=stage.width, SH=stage.height, pal=palette();
         ctx.setTransform(1,0,0,1,0,0);
         ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
         ctx.fillStyle=pal[0]; ctx.fillRect(0,0,SW,SH);
 
-        var want=Math.max(200, Math.min(NC, v.points|0));
+        var lim=Math.max(200, Math.min(NC, v.points|0));
         var smooth=v.flow/100, first=true, drawn=0;
-        var lx=0, ly=0, px, py, sx, sy, mx, my;
+        var lx=0, ly=0, px, py, sx, sy, mx, my, bi, bw, k, nx2, ny2, oo;
+        /* Every stitch used to sit exactly where the Halton set had put it,
+           which is the reason the drawing never traced anything: the points
+           were chosen without reference to the picture, so the line could
+           only ever vary in how many of them it visited, never in where it
+           went. Each stitch now looks around its own neighbourhood and moves
+           to the best spot it can find — onto the edge, if there is one near.
+           The search stays inside roughly one candidate spacing, so stitches
+           never overtake each other and the Hilbert order computed at build
+           is still the right order to walk them in. */
+        var reach=Math.max(1, Math.round((v.snap/100)*3));
         ctx.beginPath();                                  // one path
         for(i=0;i<NC;i++){
-          if(cr[i]>=want) continue;                       // outside the chosen prefix
+          if(cr[i]>=lim) continue;                        // outside the chosen prefix
           sx=cx[i]*RW; sy=cy[i]*RH;
-          o=(Math.min(RH-1,sy|0))*RW + Math.min(RW-1,sx|0);
-          if(lum[o]<=ct[i]) continue;                     // too light here for a stitch
-          px=cx[i]*SW; py=cy[i]*SH;
+          nx2=Math.min(RW-1,sx|0); ny2=Math.min(RH-1,sy|0);
+          bi=ny2*RW+nx2; bw=want[bi];
+          if(v.snap>0){
+            for(k=0;k<8;k++){
+              x2=nx2+SNX[k]*reach; y2=ny2+SNY[k]*reach;
+              if(x2<0||y2<0||x2>=RW||y2>=RH) continue;
+              oo=y2*RW+x2;
+              if(want[oo]>bw){ bw=want[oo]; bi=oo; }
+            }
+            nx2=bi%RW; ny2=(bi/RW)|0;
+          }
+          if(bw<=ct[i]) continue;                         // too light here for a stitch
+          px=(nx2+0.5)/RW*SW; py=(ny2+0.5)/RH*SH;
           if(first){ ctx.moveTo(px,py); first=false; }    // ...and one moveTo, ever
           else if(smooth>0){
             /* corners rounded by curving to the midpoint of each step with
