@@ -1,0 +1,31 @@
+plugins { id 'com.android.application' }
+
+android {
+  namespace 'com.yoshicamera.app'
+  compileSdk 34
+
+  defaultConfig {
+    applicationId "com.yoshicamera.app"
+    minSdk 21                 // TWA needs 21+; below that it falls back to a custom tab
+    targetSdk 34
+    versionCode 1
+    versionName "1.0"
+    resValue "string", "launchUrl", "https://yoshicamera.com/"
+    resValue "string", "hostName", "yoshicamera.com"
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      // signing is configured in Play Console via Play App Signing — see README
+    }
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}
