@@ -6687,6 +6687,174 @@
     });
   })();
 
+  /* ---------------- PASSES — the same frame, several ways of looking ----------
+     A compositing breakdown: one frame taken apart into the layers a machine
+     vision pipeline would work from, laid out side by side or quartered.
+
+     Be clear about what these are. The surface pass is not geometry — it
+     reads brightness as if it were height and takes the slope, which is a
+     bump map, so a flat photograph of a bird gets "surface" too. The flat
+     pass divides the picture by a heavily blurred copy of itself, which
+     removes broad shading and leaves something closer to the colour a thing
+     actually is. The marks are real corner detection: the smaller eigenvalue
+     of the same structure tensor Tide builds is large only where the image
+     turns in two directions at once, which is what a corner is, and that is
+     arithmetic rather than recognition — it knows something is a corner, not
+     that it is an eye.
+
+     There is deliberately no depth pass. Depth cannot be got out of a single
+     still frame without a model, and there are none in here. */
+  (function(){
+    var src=mk(), out=mk(), img=null, RW=0, RH=0;
+    var lum=null, sc=null, blr=null, tE=null, tF=null, tG=null, cor=null;
+    var v={ layout:'slices', shown:'all', relief:58, flatten:62, marks:46, glow:30 };
+
+    function build(){
+      RW=SLOW_DEVICE?(LOW_MEMORY?118:144):Math.max(144,Math.min(224,Math.round((W||360)*0.48)));
+      RH=Math.max(40,Math.round(RW*((H||640)/Math.max(W||360,1))));
+      src.c.width=RW; src.c.height=RH; out.c.width=RW; out.c.height=RH;
+      img=out.x.createImageData(RW,RH);
+      var n=RW*RH;
+      lum=new Float32Array(n); sc=new Float32Array(n); blr=new Float32Array(n);
+      tE=new Float32Array(n); tF=new Float32Array(n); tG=new Float32Array(n); cor=new Float32Array(n);
+    }
+    function box(a,tmp,r){
+      var x,y,i,acc,inv=1/(r*2+1);
+      for(y=0;y<RH;y++){
+        acc=0; for(i=-r;i<=r;i++) acc+=a[y*RW+clamp(i,0,RW-1)];
+        for(x=0;x<RW;x++){ tmp[y*RW+x]=acc*inv;
+          acc+=a[y*RW+clamp(x+r+1,0,RW-1)]-a[y*RW+clamp(x-r,0,RW-1)]; }
+      }
+      for(x=0;x<RW;x++){
+        acc=0; for(i=-r;i<=r;i++) acc+=tmp[clamp(i,0,RH-1)*RW+x];
+        for(y=0;y<RH;y++){ a[y*RW+x]=acc*inv;
+          acc+=tmp[clamp(y+r+1,0,RH-1)*RW+x]-tmp[clamp(y-r,0,RH-1)*RW+x]; }
+      }
+    }
+    reg({
+      id:'passes', name:'Passes', line:'The frame taken apart',
+      note:'One frame shown as the layers a machine would work from. Surface reads brightness as height and takes the slope — a bump map, not geometry, so a flat photograph of a face gets a surface too. Flat divides the picture by a blurred copy of itself, dropping broad shading for something nearer the colour a thing actually is. Marks are real corner detection: the smaller eigenvalue of the structure tensor is only large where the image turns two ways at once. There is no depth pass, because depth cannot be had from one still frame without a model, and there are none in here.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'layout',label:'Layout',opts:[['slices','Slices'],['grid','Quarters'],['one','Single']]},
+        {t:'seg',k:'shown',label:'Pass',opts:[['all','All'],['normal','Surface'],['albedo','Flat'],['edge','Edges']]},
+        {t:'sld',k:'relief',label:'Relief',min:0,max:100},
+        {t:'sld',k:'flatten',label:'Flatten',min:0,max:100},
+        {t:'sld',k:'marks',label:'Marks',min:0,max:100},
+        {t:'sld',k:'glow',label:'Bloom',min:0,max:100}
+      ],
+      init:build, size:build,
+      frame:function(){
+        if(!lum) build();
+        if(!grabInto(src,RW,RH)) return;
+        var d=src.x.getImageData(0,0,RW,RH).data, n=RW*RH, i, x, y, o;
+        for(i=0;i<n;i++){ o=i*4; lum[i]=(0.2126*d[o]+0.7152*d[o+1]+0.0722*d[o+2])/255; }
+
+        // a broadly blurred copy, which is what "shading" means here
+        for(i=0;i<n;i++) blr[i]=lum[i];
+        box(blr, sc, Math.max(2, Math.round(RW*0.055)));
+
+        // structure tensor, for the corners
+        var gx,gy;
+        for(y=0;y<RH;y++) for(x=0;x<RW;x++){
+          i=y*RW+x;
+          if(x===0||y===0||x===RW-1||y===RH-1){ tE[i]=0;tF[i]=0;tG[i]=0; continue; }
+          gx=(lum[i+1]-lum[i-1])*0.5; gy=(lum[i+RW]-lum[i-RW])*0.5;
+          tE[i]=gx*gx; tF[i]=gx*gy; tG[i]=gy*gy;
+        }
+        box(tE,sc,2); box(tF,sc,2); box(tG,sc,2);
+        var E,F,G,disc,lmin,best=1e-9,sumC=0;
+        for(i=0;i<n;i++){
+          E=tE[i];F=tF[i];G=tG[i];
+          disc=Math.sqrt((E-G)*(E-G)+4*F*F);
+          lmin=(E+G-disc)*0.5;                 // large only where it turns two ways
+          cor[i]=lmin; sumC+=lmin; if(lmin>best) best=lmin;
+        }
+        /* One outstanding corner — an eye against a flat field — used to set
+           the bar for the whole frame, so everything else fell under it and
+           two marks came back. Measured against the average instead, a corner
+           only has to stand out from its own picture. */
+        var meanC=sumC/n;
+
+        var od=img.data, rel=0.7+(1-(v.relief/100))*7, fl=v.flatten/100;
+        var lay=v.layout, one=(v.shown!=='all'), pass, r2,g2,b2, nx,ny,nz,il, sh;
+        var PN=4;
+        for(y=0;y<RH;y++) for(x=0;x<RW;x++){
+          i=y*RW+x; o=i*4;
+          if(one) pass=(v.shown==='normal')?0:(v.shown==='albedo'?1:2);
+          else if(lay==='slices') pass=Math.min(PN-1,(x/RW*PN)|0);
+          else if(lay==='grid') pass=((y<RH/2)?0:2)+((x<RW/2)?0:1);
+          else pass=0;
+          if(pass===0){
+            // slope of the brightness field, written as a direction
+            gx=(lum[Math.min(n-1,i+1)]-lum[Math.max(0,i-1)])*rel;
+            gy=(lum[Math.min(n-1,i+RW)]-lum[Math.max(0,i-RW)])*rel;
+            nx=-gx; ny=-gy; nz=1;
+            il=1/Math.sqrt(nx*nx+ny*ny+1);
+            r2=(nx*il*0.5+0.5)*255; g2=(ny*il*0.5+0.5)*255; b2=(nz*il*0.5+0.5)*255;
+          } else if(pass===1){
+            // divide out the broad shading
+            sh=blr[i]<0.02?0.02:blr[i];
+            var k=(1-fl)+fl*(0.5/sh);
+            r2=d[o]*k; g2=d[o+1]*k; b2=d[o+2]*k;
+          } else if(pass===2){
+            gx=(lum[Math.min(n-1,i+1)]-lum[Math.max(0,i-1)]);
+            gy=(lum[Math.min(n-1,i+RW)]-lum[Math.max(0,i-RW)]);
+            var m=Math.min(1,Math.sqrt(gx*gx+gy*gy)*6);
+            r2=m*90; g2=m*225; b2=m*255;
+          } else { r2=d[o]; g2=d[o+1]; b2=d[o+2]; }
+          od[o]=r2<0?0:(r2>255?255:r2);
+          od[o+1]=g2<0?0:(g2>255?255:g2);
+          od[o+2]=b2<0?0:(b2>255?255:b2);
+          od[o+3]=255;
+        }
+        out.x.putImageData(img,0,0);
+
+        var SW=stage.width, SH=stage.height;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        ctx.imageSmoothingEnabled=true;
+        ctx.drawImage(out.c,0,0,SW,SH);
+
+        if(v.glow>0){
+          ctx.globalCompositeOperation='lighter';
+          ctx.globalAlpha=(v.glow/100)*0.28;
+          ctx.filter=('filter' in ctx)?'blur('+Math.round(2+v.glow/12)+'px)':'none';
+          ctx.drawImage(out.c,0,0,SW,SH);
+          ctx.filter='none'; ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+        }
+
+        // the marks: strongest corner per cell, so they spread out
+        var found=0;
+        if(v.marks>0){
+          var cell=Math.max(6, Math.round(RW/(6+(v.marks/100)*16)));
+          var thr=Math.max(1e-9, meanC*(7.5-(v.marks/100)*6.6));
+          var kx=SW/RW, ky=SH/RH, cx2,cy2,bx,by,bv,xx,yy,ii;
+          ctx.lineWidth=Math.max(1,Math.round(Math.min(SW,SH)*0.0016));
+          ctx.font=Math.max(7,Math.round(Math.min(SW,SH)*0.011))+'px ui-monospace,Menlo,monospace';
+          for(cy2=0;cy2+cell<RH;cy2+=cell) for(cx2=0;cx2+cell<RW;cx2+=cell){
+            bv=0; bx=-1; by=-1;
+            for(yy=cy2;yy<cy2+cell;yy++) for(xx=cx2;xx<cx2+cell;xx++){
+              ii=yy*RW+xx; if(cor[ii]>bv){ bv=cor[ii]; bx=xx; by=yy; }
+            }
+            if(bx<0||bv<thr) continue;
+            var px=bx*kx, py=by*ky, s2=Math.max(3,Math.min(SW,SH)*0.011);
+            var hot=Math.min(1,bv/Math.max(1e-9,meanC*70));   // only the genuinely strong ones read hot
+            ctx.strokeStyle= hot>0.55 ? 'rgba(255,72,90,.95)' : 'rgba(120,255,190,.75)';
+            ctx.strokeRect(px-s2,py-s2,s2*2,s2*2);
+            ctx.beginPath(); ctx.moveTo(px+s2,py); ctx.lineTo(px+s2*2.1,py); ctx.stroke();
+            if(hot>0.55){
+              ctx.fillStyle='rgba(255,72,90,.9)';
+              ctx.fillText(String(Math.round(hot*100)), px+s2*2.4, py+s2*0.5);
+            }
+            found++;
+          }
+        }
+        hSub.textContent=(one?v.shown:(lay==='grid'?'four passes':(lay==='slices'?'four slices':'surface')))+' · '+found+' marks';
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
@@ -6766,7 +6934,7 @@
     newsprint:['58,44,34','#F2ECD9'], lyrics:['138,118,255','#090813'], ascii:['123,255,166','#08100A'], emoji:['255,208,78','#0A0B10'], lifeform:['111,255,176','#06080D'], onebit:['238,236,229','#0B0B0D'],
     veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
     polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806'],
-    bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09'], tide:['120,196,255','#04122E']
+    bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09'], tide:['120,196,255','#04122E'], passes:['120,255,190','#05070B']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){

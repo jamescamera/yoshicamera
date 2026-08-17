@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 33 instruments. Swipe left or right (or use the
+The rack currently holds 34 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -54,6 +54,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Bitrot | A corrupted-file camera |
 | Thread | One line, never lifted |
 | Tide | A flow-field camera |
+| Passes | The frame taken apart |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -121,7 +122,7 @@ a single unbroken line reach all of them without ever jumping across the
 frame — so the whole picture is one stroke, and its only way to be dark is for
 the line to crowd against itself.
 
-The other 32 cameras each implement their own transform the same way —
+The other 33 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -153,7 +154,12 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 33 cameras. In Gamut specifically, surfaces look coherent
+in any of the 34 cameras. Passes draws tracking marks, but they are corner
+detection and nothing more — the smaller eigenvalue of the structure tensor
+is large wherever the image turns in two directions at once, which is
+arithmetic, not recognition. It can tell you there is a corner there; it has
+no idea it is an eye. Passes has no depth layer for the same reason: depth
+cannot be had from one still frame without a model. In Gamut specifically, surfaces look coherent
 because the transform is very nearly a pure function of colour applied
 globally — pixels sharing an input colour land about 8× tighter together
 than the frame's overall spread, wherever they are in the picture. Real
