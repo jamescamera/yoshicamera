@@ -5042,7 +5042,7 @@
   /* --- new hybrids: Veil, Fresco, Vaporwave --- */
   (function(){
     var src=mk(), out=mk(), FW=128, FH=176, lastDraw=0;
-    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0 };
+    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0, brk:30 };
     function build(){
       var base=SLOW_DEVICE?(LOW_MEMORY?104:124):154;
       FW=Math.max(72,Math.min(190,Math.round(base)));
@@ -5066,7 +5066,8 @@
         {t:'seg',k:'pal',label:'Palette',opts:[['warning','Warning'],['paper','Paper'],['cyan','Cyan'],['mono','Mono']]},
         {t:'sld',k:'rep',label:'Repeat',min:8,max:56},
         {t:'sld',k:'bite',label:'Bite',min:0,max:100},
-        {t:'sld',k:'gap',label:'Gap',min:0,max:100}
+        {t:'sld',k:'gap',label:'Gap',min:0,max:100},
+        {t:'sld',k:'brk',label:'Break',min:0,max:100}
       ],
       init:build, size:build,
       frame:function(){
@@ -5082,6 +5083,12 @@
         var outImg=out.x.createImageData(ow,oh), o=outImg.data;
         var pal=palette(), bg=hexRgb(pal[0]), base=hexRgb(pal[1]), ink=hexRgb(pal[2]), accent=hexRgb(pal[3]);
         var bite=.62+(v.bite/100)*1.72, t=stamp*.001;
+        /* the ink used to run as one unbroken ribbon whose width rose and
+           fell, which reads as a solid stripe rather than as marks. Letting
+           it fail a threshold that wanders along the band lifts the pen
+           instead: solid where the picture is dark, breaking into separate
+           dashes through the mid-tones, gone in the light. */
+        var brk=(v.brk/100)*0.92, bthr;
         var s,x,y,si,ox,oy,shift,p,lum,lL,lR,lU,lD,edge,val,w,left,useAccent,srcPos;
         function write(px,py,c){ var q=(py*ow+px)*4; o[q]=c[0]; o[q+1]=c[1]; o[q+2]=c[2]; o[q+3]=255; }
         function sample(ix,iy){
@@ -5109,7 +5116,8 @@
               srcPos=(s/(Math.max(1,stripes-1)))*(FW-1)+shift;
               val=sample(srcPos,y);
               for(x=0;x<bandCells;x++) write(ox+x,y,base);
-              w=Math.max(0,Math.round(val*(bandCells+2)));
+              bthr=brk*(0.30+0.70*hash2(s*31+((y/3)|0), ((y*7)|0)+s));
+              w=(val<bthr)?0:Math.max(0,Math.round(val*(bandCells+2)));
               left=Math.floor((bandCells-w)/2);
               useAccent=val>.58 && ((y+s)%11<2);
               for(x=0;x<w;x++) if(ox+left+x>=ox&&ox+left+x<ox+bandCells) write(ox+left+x,y,useAccent&&x===0?accent:ink);
@@ -5123,7 +5131,8 @@
               srcPos=(s/(Math.max(1,stripes-1)))*(FH-1)+shift;
               val=sample(x,srcPos);
               for(y=0;y<bandCells;y++) write(x,oy+y,base);
-              w=Math.max(0,Math.round(val*(bandCells+2)));
+              bthr=brk*(0.30+0.70*hash2(s*31+((x/3)|0), ((x*7)|0)+s));
+              w=(val<bthr)?0:Math.max(0,Math.round(val*(bandCells+2)));
               left=Math.floor((bandCells-w)/2);
               useAccent=val>.58 && ((x+s)%11<2);
               for(y=0;y<w;y++) if(oy+left+y>=oy&&oy+left+y<oy+bandCells) write(x,oy+left+y,useAccent&&y===0?accent:ink);
