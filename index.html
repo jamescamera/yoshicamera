@@ -616,6 +616,7 @@
       <button class="b" id="bMic">Sound off</button>
       <button class="b on" id="bFmt">MP4</button>
       <button class="b" id="bAspect">Screen</button>
+      <button class="b" id="bShare" style="display:none">Save to Photos</button>
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bRot">Rot the file</button>
@@ -1456,8 +1457,7 @@
           }
           big.x.putImageData(img,0,0);
           shellFlash();
-          shellSaveCanvas(big.c, fileName('gamut','png'));
-          toast(commas(n)+' colours · saved');
+          shellSaveCanvas(big.c, fileName('gamut','png'), commas(n)+' colours · saved');
         } catch(e){ toast(PHOTO.on()
             ? 'Not enough memory at that size — lower the grain and shoot again'
             : 'Not enough memory — lower the grain'); }
@@ -1482,7 +1482,7 @@
       ],
       init:build,
       size:build,
-      shoot:function(){ if(v.view==='plate'){ shellFlash(); shellSaveCanvas(stage, fileName('gamut-plate','png')); toast('Plate saved'); } else develop(); },
+      shoot:function(){ if(v.view==='plate'){ shellFlash(); shellSaveCanvas(stage, fileName('gamut-plate','png'), 'Plate saved'); } else develop(); },
       frame:function(){
         if(palOrdered && palOrdered.length!==palN) reorder();
         if(v.view==='plate'){ drawPlate(); return; }
@@ -8006,7 +8006,7 @@
       MPF_SEG:MPF_SEG, insertAt:insertAt,
       /* returns false if this browser will not make a JPEG, so the caller can
          fall back to a flat PNG rather than saving nothing */
-      save:function(can, name, done, fail){
+      save:function(can, name, fail){
         if(!can.toBlob) return false;
         var ms=maskSize(can.width,can.height), m=mk(ms.w,ms.h);
         try { maskInto(m, can, ms.w, ms.h); } catch(e){ return false; }
@@ -8018,10 +8018,8 @@
               blobBytes(gainBlob, function(gain){
                 var out;
                 try { out=assemble(base,gain); } catch(e){ fail(); return; }
-                var u=URL.createObjectURL(new Blob([out],{type:'image/jpeg'}));
-                saveUrl(u,name);
-                setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} },60000);
-                if(done) done(out.length);
+                deliver(new Blob([out],{type:'image/jpeg'}), name,
+                        'Extra white · '+Math.round(out.length/1024)+'KB');
               }, fail);
             }, 'image/jpeg', 0.94);
           }, fail);
@@ -8338,11 +8336,8 @@
       gifBusy=false;
       var bytes=out.take();
       try {
-        var blob=new Blob([bytes],{type:'image/gif'});
-        var u=URL.createObjectURL(blob);
-        saveUrl(u, fileName(null,'gif'));
-        setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} }, 60000);
-        toast('GIF saved · '+Math.round(bytes.length/1024)+'KB');
+        deliver(new Blob([bytes],{type:'image/gif'}), fileName(null,'gif'),
+                'GIF saved · '+Math.round(bytes.length/1024)+'KB');
       } catch(e){ toast('Could not save the GIF'); }
     }
     setTimeout(step,30);
@@ -8358,7 +8353,7 @@
      whole shutter to develop its plate at the file's own size — so routing
      this through the same helper is what keeps "rot the file" genuinely
      app-wide instead of quietly skipping the founding camera. */
-  function shellSaveCanvas(c,n){ saveStillCanvas(c,n); }
+  function shellSaveCanvas(c,n,m){ saveStillCanvas(c,n,m); }
   /* everything this app makes is called the same thing, so it groups in a
      camera roll: YoshiCamera-<camera>-<date>-<time>.<ext> */
   function fileName(tag,ext){
@@ -8380,29 +8375,26 @@
   }
   /* a 12-megapixel PNG as a data URL is a 30MB string, and browsers choke on
      handing one to a download link. Blobs have no such limit. */
-  function saveCanvas(can,name){
+  function saveCanvas(can,name,msg){
     can=markedCopy(can);
     if(HDR.on() && can.toBlob){
       var ok=HDR.save(can, name.replace(/\.png$/i,'.jpg'),
-        function(len){ toast('Extra white \u00b7 '+Math.round(len/1024)+'KB'); },
-        function(){ savePlain(can,name); toast('No JPEG here \u2014 saved flat'); });
+        function(){ savePlain(can,name,'No JPEG here \u2014 saved flat'); });
       if(ok!==false) return;
     }
-    savePlain(can,name);
+    savePlain(can,name,msg);
   }
-  function savePlain(can,name){
+  function savePlain(can,name,msg){
     if(can.toBlob){
       try {
         can.toBlob(function(b){
           if(!b){ try { saveUrl(can.toDataURL('image/png'),name); } catch(e){ toast('Could not save'); } return; }
-          var u=URL.createObjectURL(b);
-          saveUrl(u,name);
-          setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} }, 60000);
+          deliver(b,name,msg);
         }, 'image/png');
         return;
       } catch(e){}
     }
-    try { saveUrl(can.toDataURL('image/png'),name); } catch(e){ toast('Could not save'); }
+    try { saveUrl(can.toDataURL('image/png'),name); if(msg) toast(msg); } catch(e){ toast('Could not save'); }
   }
   function saveUrl(url,name){
     var a=document.createElement('a');
@@ -8410,6 +8402,67 @@
       a.href=url; a.download=name;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     } else { window.open(url,'_blank'); }
+  }
+
+  /* ---------- handing the finished file to the phone ----------
+     A download link puts the file in Downloads. On Android that is not the
+     camera roll: the picture is on the phone, but not where the phone keeps
+     pictures, so nothing that shows photographs will show it. The share
+     sheet is the only route a web page has into the gallery — hand the
+     browser a File and Photos, Drive, Messages and the rest turn up as
+     destinations, and "Save to Photos" does what pressing a shutter
+     implied in the first place.
+
+     Two rules this has to respect or it saves nothing at all:
+       · it needs transient user activation, so everything before it —
+         encoding, rot, muxing, a full-resolution develop — has to finish
+         inside the few seconds a press stays valid. Past that the promise
+         rejects and the download link has to take over.
+       · a dismissed sheet rejects with AbortError, which is the user
+         saying no, not a failure. Falling back to a download there would
+         save the file they had just declined to save. */
+  var SHARE={ ok:false, on:false };
+  (function(){
+    try {
+      var probe=new File([new Blob(['x'],{type:'image/png'})],'probe.png',{type:'image/png'});
+      SHARE.ok=!!(navigator.share && navigator.canShare && navigator.canShare({files:[probe]}));
+    } catch(e){ SHARE.ok=false; }
+    /* Installed — from the home screen, or as the Play app — there is no
+       downloads shelf to notice a file arriving in, so the sheet is the
+       sensible default there. A plain browser tab is left as it was. */
+    var installed=false;
+    try {
+      installed=(window.matchMedia && matchMedia('(display-mode: standalone)').matches) ||
+                navigator.standalone===true;
+    } catch(e){}
+    SHARE.on=SHARE.ok && installed;
+  })();
+  function downloadBlob(blob,name){
+    var u=URL.createObjectURL(blob);
+    saveUrl(u,name);
+    setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} }, 60000);
+  }
+  /* the one door every finished file leaves through */
+  function deliver(blob,name,msg){
+    if(SHARE.on && SHARE.ok){
+      try {
+        var f=new File([blob], name, {type:blob.type||'application/octet-stream'});
+        if(navigator.canShare({files:[f]})){
+          navigator.share({files:[f], title:name})
+            .then(function(){ if(msg) toast(msg); })
+            ['catch'](function(e){
+              if(e && e.name==='AbortError'){ toast('Not saved'); return; }
+              downloadBlob(blob,name);
+              /* the usual cause is the press having gone stale while a big
+                 frame was being written out, not the sheet being broken */
+              toast('Took too long for the share sheet — saved to your downloads');
+            });
+          return;
+        }
+      } catch(e){}
+    }
+    downloadBlob(blob,name);
+    if(msg) toast(msg);
   }
 
   /* ---------- rotting a real JPEG, in the file rather than in the pixels ----------
@@ -8531,7 +8584,7 @@
      but it now lives in the pixels, so the file opens, uploads and shares
      anywhere. Raw mode below keeps the actual broken file for anyone who
      wants the artefact itself rather than a picture of it. */
-  function saveRottedComposite(can, name, damage, vertical, done, fail){
+  function saveRottedComposite(can, name, damage, vertical, msg, fail){
     can=markedCopy(can);
     var work=can;
     if(vertical){ try { work=quarterTurn(can); } catch(e){ vertical=false; work=can; } }
@@ -8553,11 +8606,10 @@
           }
           function finish(){
             var fin = vertical ? quarterTurnBack(out.c) : out.c;
-            savePlain(fin, name);
+            savePlain(fin, name, msg);
             for(var k=0;k<urls.length;k++)(function(u){
               setTimeout(function(){ try{ URL.revokeObjectURL(u); }catch(e){} },60000);
             })(urls[k]);
-            if(done) done();
           }
           decodeJpegBytes(base.slice(0), function(cleanIm,cu){
             urls.push(cu);
@@ -8584,7 +8636,7 @@
     }, 'image/jpeg', 0.92);
   }
   /* encode the frame as a genuine JPEG, damage the encoded bytes, save that */
-  function saveRottedJpeg(can, name, damage, depth, vertical, done, fail){
+  function saveRottedJpeg(can, name, damage, depth, vertical, fail){
     can=markedCopy(can);
     if(vertical){ try { can=quarterTurn(can); } catch(e){ vertical=false; } }
     if(!can.toBlob){ if(fail) fail(); return; }
@@ -8598,10 +8650,8 @@
           // 8 = turn a quarter back the other way when displaying
           if(vertical) bytes=withExifOrientation(bytes, 8);
           var blob=new Blob([bytes],{type:'image/jpeg'});
-          var u=URL.createObjectURL(blob);
-          saveUrl(u,name);
-          setTimeout(function(){ try { URL.revokeObjectURL(u); } catch(e){} }, 60000);
-          if(done) done(blob.size);
+          deliver(blob, name, 'Raw rotted JPEG · '+Math.round(blob.size/1024)+
+                              'KB — broken on purpose, some apps will refuse it');
         } catch(e){ if(fail) fail(); }
       };
       fr.onerror=function(){ if(fail) fail(); };
@@ -8615,7 +8665,7 @@
   var ROT={ on:false, amount:45, vertical:false, raw:false };
   /* the one door every still goes out through, so the export switches apply
      wherever the shutter was pressed from */
-  function saveStillCanvas(can, name){
+  function saveStillCanvas(can, name, msg){
     if(ROT.on){
       var a=ROT.amount/100;
       if(ROT.raw){
@@ -8623,23 +8673,21 @@
            decides how much survives — nothing recovers once an error is in
            the chain — so this tracks the setting directly. */
         saveRottedJpeg(can, name.replace(/\.[^.]+$/,'')+'.jpg', a, Math.pow(a,0.85), ROT.vertical,
-          function(size){ toast('Raw rotted JPEG · '+Math.round(size/1024)+'KB — broken on purpose, some apps will refuse it'); },
-          function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
+          function(){ saveCanvas(can, name, 'Could not rot it — saved clean'); });
         return;
       }
       saveRottedComposite(can, name.replace(/\.[^.]+$/,'')+'.png', a, ROT.vertical,
-        function(){ toast('Rotted still saved — damaged for real, but shareable'); },
-        function(){ saveCanvas(can, name); toast('Could not rot it — saved clean'); });
+        'Rotted still saved — damaged for real, but shareable',
+        function(){ saveCanvas(can, name, 'Could not rot it — saved clean'); });
       return;
     }
-    saveCanvas(can, name);
+    saveCanvas(can, name, msg||'Still saved');
   }
   function shotNow(){
     var c=CAMS[cur];
     if(c && c.shoot){ c.shoot(); return; }
     shutterFlash();
     saveStillCanvas(sourceCanvas(), fileName(null,'png'));
-    if(!ROT.on) toast('Still saved');
   }
 
   /* Cameras that build up over time need a run-up before they are worth
@@ -8760,7 +8808,13 @@
     var br=document.getElementById('bRot'), bd=document.getElementById('bRotDir');
     var bw=document.getElementById('bRotRaw');
     var rf=document.getElementById('rotField'), ra=document.getElementById('rotAmt'), rv=document.getElementById('rotVal');
+    var bs=document.getElementById('bShare');
     function sync(){
+      /* no button where the browser has no file sharing to offer — iOS
+         Safari and Chrome on Android have it, most desktops do too, but a
+         browser without it would only get a control that does nothing */
+      bs.style.display=SHARE.ok?'':'none';
+      bs.className=SHARE.on?'b on':'b';
       bh.className=HDR.v.on?'b on':'b';
       bm.className=HDR.v.mask?'b on':'b';
       bm.style.display=HDR.v.on?'':'none';
@@ -8774,6 +8828,12 @@
       rv.textContent=ROT.amount;
       buildHardware();
     }
+    bs.addEventListener('click', function(){
+      SHARE.on=!SHARE.on;
+      sync();
+      toast(SHARE.on ? 'Saves go through the share sheet — pick Photos to put them in your camera roll'
+                     : 'Saves go straight to your downloads');
+    });
     bh.addEventListener('click', function(){
       HDR.v.on=!HDR.v.on;
       if(!HDR.v.on){ HDR.v.mask=false; paintMask(); }
@@ -9366,11 +9426,9 @@
         save(blob);
       }
       function save(b){
-        var url=URL.createObjectURL(b);
-        saveUrl(url, fileName(null, isMp4?'mp4':'webm'));
-        setTimeout(function(){ URL.revokeObjectURL(url); },60000);
-        toast(isMp4 ? (recCan.width+'×'+recCan.height+' mp4 · '+Math.round(b.size/1048576*10)/10+' MB saved')
-                    : ('webm · '+Math.round(b.size/1048576*10)/10+' MB — this browser has no mp4 encoder'));
+        deliver(b, fileName(null, isMp4?'mp4':'webm'),
+          isMp4 ? (recCan.width+'×'+recCan.height+' mp4 · '+Math.round(b.size/1048576*10)/10+' MB saved')
+                : ('webm · '+Math.round(b.size/1048576*10)/10+' MB — this browser has no mp4 encoder'));
       }
     }
     // a timeslice guarantees data arrives while recording — without one, WebKit
