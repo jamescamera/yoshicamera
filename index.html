@@ -5042,7 +5042,7 @@
   /* --- new hybrids: Veil, Fresco, Vaporwave --- */
   (function(){
     var src=mk(), out=mk(), FW=128, FH=176, lastDraw=0;
-    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0 };
+    var v={ dir:'vert', rep:32, flow:'still', pal:'mono', bite:72, gap:0, brk:30 };
     function build(){
       var base=SLOW_DEVICE?(LOW_MEMORY?104:124):154;
       FW=Math.max(72,Math.min(190,Math.round(base)));
@@ -5066,7 +5066,8 @@
         {t:'seg',k:'pal',label:'Palette',opts:[['warning','Warning'],['paper','Paper'],['cyan','Cyan'],['mono','Mono']]},
         {t:'sld',k:'rep',label:'Repeat',min:8,max:56},
         {t:'sld',k:'bite',label:'Bite',min:0,max:100},
-        {t:'sld',k:'gap',label:'Gap',min:0,max:100}
+        {t:'sld',k:'gap',label:'Gap',min:0,max:100},
+        {t:'sld',k:'brk',label:'Break',min:0,max:100}
       ],
       init:build, size:build,
       frame:function(){
@@ -5082,6 +5083,12 @@
         var outImg=out.x.createImageData(ow,oh), o=outImg.data;
         var pal=palette(), bg=hexRgb(pal[0]), base=hexRgb(pal[1]), ink=hexRgb(pal[2]), accent=hexRgb(pal[3]);
         var bite=.62+(v.bite/100)*1.72, t=stamp*.001;
+        /* the ink used to run as one unbroken ribbon whose width rose and
+           fell, which reads as a solid stripe rather than as marks. Letting
+           it fail a threshold that wanders along the band lifts the pen
+           instead: solid where the picture is dark, breaking into separate
+           dashes through the mid-tones, gone in the light. */
+        var brk=(v.brk/100)*0.92, bthr;
         var s,x,y,si,ox,oy,shift,p,lum,lL,lR,lU,lD,edge,val,w,left,useAccent,srcPos;
         function write(px,py,c){ var q=(py*ow+px)*4; o[q]=c[0]; o[q+1]=c[1]; o[q+2]=c[2]; o[q+3]=255; }
         function sample(ix,iy){
@@ -5109,7 +5116,8 @@
               srcPos=(s/(Math.max(1,stripes-1)))*(FW-1)+shift;
               val=sample(srcPos,y);
               for(x=0;x<bandCells;x++) write(ox+x,y,base);
-              w=Math.max(0,Math.round(val*(bandCells+2)));
+              bthr=brk*(0.30+0.70*hash2(s*31+((y/3)|0), ((y*7)|0)+s));
+              w=(val<bthr)?0:Math.max(0,Math.round(val*(bandCells+2)));
               left=Math.floor((bandCells-w)/2);
               useAccent=val>.58 && ((y+s)%11<2);
               for(x=0;x<w;x++) if(ox+left+x>=ox&&ox+left+x<ox+bandCells) write(ox+left+x,y,useAccent&&x===0?accent:ink);
@@ -5123,7 +5131,8 @@
               srcPos=(s/(Math.max(1,stripes-1)))*(FH-1)+shift;
               val=sample(x,srcPos);
               for(y=0;y<bandCells;y++) write(x,oy+y,base);
-              w=Math.max(0,Math.round(val*(bandCells+2)));
+              bthr=brk*(0.30+0.70*hash2(s*31+((x/3)|0), ((x*7)|0)+s));
+              w=(val<bthr)?0:Math.max(0,Math.round(val*(bandCells+2)));
               left=Math.floor((bandCells-w)/2);
               useAccent=val>.58 && ((x+s)%11<2);
               for(y=0;y<w;y++) if(oy+left+y>=oy&&oy+left+y<oy+bandCells) write(x,oy+left+y,useAccent&&y===0?accent:ink);
@@ -6477,11 +6486,11 @@
     var src=mk(), RW=0, RH=0, lum=null, fx=null, fy=null, coh=null, bucket=null;
     var tE=null, tF=null, tG=null, bE=null, bF=null, bG=null;
     var sx=null, sy=null, NS=0, seedFor='';
-    var v={ pal:'ocean', strokes:4200, length:40, curl:38, weight:13, smooth:60 };
+    var v={ pal:'ocean', strokes:4600, length:30, curl:46, weight:11, smooth:38 };
 
     function halton(i,b){ var f=1,r=0; while(i>0){ f/=b; r+=f*(i%b); i=Math.floor(i/b); } return r; }
     function build(){
-      RW=SLOW_DEVICE?(LOW_MEMORY?96:120):Math.max(120,Math.min(190,Math.round((W||360)*0.40)));
+      RW=SLOW_DEVICE?(LOW_MEMORY?110:140):Math.max(140,Math.min(240,Math.round((W||360)*0.52)));
       RH=Math.max(40,Math.round(RW*((H||640)/Math.max(W||360,1))));
       src.c.width=RW; src.c.height=RH;
       var n=RW*RH;
@@ -6553,13 +6562,17 @@
           gx=(lum[i+1]-lum[i-1])*0.5; gy=(lum[i+RW]-lum[i-RW])*0.5;
           tE[i]=gx*gx; tF[i]=gx*gy; tG[i]=gy*gy;
         }
-        var r=Math.max(1, Math.round(1+(v.smooth/100)*6));
+        /* Coherence used to reach a five-pixel radius on a 190-wide field —
+           blurring away better than two percent of the frame width, which is
+           precisely the small structure the eddies live in. It buys tidy
+           long sweeps at the cost of every detail. */
+        var r=Math.max(1, Math.round(1+(v.smooth/100)*2.5));
         blur(tE,bE,r); blur(tF,bF,r); blur(tG,bG,r);
 
         // minor eigenvector of the smoothed tensor = the direction the
         // picture changes least along, i.e. the way an edge runs
-        var E,F,G,disc,l1,vx,vy,len,sumL=0;
-        var cu=(v.curl/100)*0.9, cuC=Math.cos(cu), cuS=Math.sin(cu);
+        var E,F,G,disc,l1,vx,vy,len,sumL=0,ang,ca,sa;
+        var cu=(v.curl/100)*1.15;
         for(i=0;i<n;i++){
           E=tE[i]; F=tF[i]; G=tG[i];
           disc=Math.sqrt((E-G)*(E-G)+4*F*F);
@@ -6571,10 +6584,16 @@
           // turn a quarter: the major eigenvector crosses the edge, so its
           // perpendicular runs along it. Curl leans the whole field over,
           // which is what opens the straight runs out into eddies.
-          // the lean is the same for every pixel, so its sine and cosine are
-          // taken once rather than tens of thousands of times a frame
-          fx[i]=(-vy)*cuC-(vx)*cuS;
-          fy[i]=( vx)*cuC+(-vy)*cuS;
+          /* One constant lean everywhere only spirals around isolated blobs;
+             across a photograph it mostly yields parallel sweeps. Letting the
+             amount of turn ride on the local tone means neighbouring regions
+             rotate by different amounts, and a field whose rotation varies
+             from place to place is one with actual vorticity in it — which is
+             where eddies come from. */
+          ang=cu*(2*lum[i]-1)*1.35;
+          ca=Math.cos(ang); sa=Math.sin(ang);
+          fx[i]=(-vy)*ca-(vx)*sa;
+          fy[i]=( vx)*ca+(-vy)*sa;
           /* In a flat patch both eigenvalues are ~0, so the direction that
              comes back is whatever the fallback happened to be, and filaments
              released there shoot off in dead straight lines that read as
@@ -6604,7 +6623,7 @@
            each lineTo is a call across into the canvas implementation and
            those calls, not the pixels they fill, are what the frame costs.
            Longer strides draw the same curve for a third of the calls. */
-        var step=2.4, steps=Math.max(3, Math.min(34, Math.round((v.length|0)/step)));
+        var step=1.5, steps=Math.max(3, Math.min(40, Math.round((v.length|0)/step)));
         var lw=Math.max(0.35,(v.weight/100)*Math.min(SW,SH)*0.0035);
         var kx=SW/RW, ky=SH/RH;
         var s,px,py,dx,dy,pdx,pdy,ix,iy,ii,k,drawn=0,sp,p=[0,0,0],b;
