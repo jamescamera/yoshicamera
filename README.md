@@ -70,6 +70,15 @@ same file.
   the browser supports it, falling back to WebM otherwise — pick a fixed
   aspect (Reel 9:16, Square 1:1, Wide 16:9, or full Screen) before you start.
 - **GIF.** Hold the shutter to record a short loop instead of a still.
+- **Save to Photos.** A download link puts a file in Downloads, which on a
+  phone is not the camera roll — the picture is on the device but nothing
+  that shows photographs will show it. `Save to Photos` hands the finished
+  file to the system share sheet instead, so Photos, Drive, Messages and
+  the rest appear as destinations. It's on by default when the app is
+  installed to the home screen and off in a browser tab, where a download
+  is what you'd expect. Stills, GIFs, clips and every export mode go the
+  same way. The sheet needs the shutter press still to be live, so a slow
+  full-resolution develop falls back to a download and says so.
 - **Extra white.** Exports a still as an Ultra HDR JPEG — an ordinary SDR
   image with a gain map appended, so HDR screens can drive the highlights
   past white. A mask overlay (`Show mask`) previews which pixels will burn.
