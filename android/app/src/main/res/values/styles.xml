@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- a platform theme, so this needs no appcompat dependency to build -->
+  <style name="Theme.Splash" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+    <item name="android:windowBackground">@color/colorPrimary</item>
+    <item name="android:statusBarColor">@color/colorPrimary</item>
+    <item name="android:navigationBarColor">@color/colorPrimary</item>
+  </style>
+</resources>
