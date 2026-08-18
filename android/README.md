@@ -55,10 +55,10 @@ and Jekyll excludes directories beginning with a dot — so without it,
 
 **Does:** a Play listing, an icon in the launcher, full-screen with no
 browser UI, offline via the existing service worker, and updates that ship
-from `main` without review. Saves reach the camera roll: the app runs in
-standalone display mode, so the site's `Save to Photos` defaults on here and
-hands each finished file to the Android share sheet rather than dropping it
-in Downloads.
+from `main` without review. Saves can reach the camera roll: the site's
+`Share sheet` option hands each finished file to Android's share sheet
+rather than dropping it in Downloads. It is off until switched on, here as
+everywhere else.
 
 **Does not:** any new camera capability. A TWA is a Chrome tab without the
 furniture, so it sees exactly what the site sees through `getUserMedia` —

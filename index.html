@@ -616,7 +616,7 @@
       <button class="b" id="bMic">Sound off</button>
       <button class="b on" id="bFmt">MP4</button>
       <button class="b" id="bAspect">Screen</button>
-      <button class="b" id="bShare" style="display:none">Save to Photos</button>
+      <button class="b" id="bShare" style="display:none">Share sheet</button>
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bRot">Rot the file</button>
@@ -8410,8 +8410,12 @@
      pictures, so nothing that shows photographs will show it. The share
      sheet is the only route a web page has into the gallery — hand the
      browser a File and Photos, Drive, Messages and the rest turn up as
-     destinations, and "Save to Photos" does what pressing a shutter
-     implied in the first place.
+     destinations, and the picture reaches the camera roll.
+
+     It stays off until it is asked for, though. Pressing a shutter means
+     take a picture, not open a conversation about where to send it, and
+     Android's sheet leads with the apps you might post to — so defaulting
+     it on turned every photograph into a prompt to share one.
 
      Two rules this has to respect or it saves nothing at all:
        · it needs transient user activation, so everything before it —
@@ -8427,15 +8431,6 @@
       var probe=new File([new Blob(['x'],{type:'image/png'})],'probe.png',{type:'image/png'});
       SHARE.ok=!!(navigator.share && navigator.canShare && navigator.canShare({files:[probe]}));
     } catch(e){ SHARE.ok=false; }
-    /* Installed — from the home screen, or as the Play app — there is no
-       downloads shelf to notice a file arriving in, so the sheet is the
-       sensible default there. A plain browser tab is left as it was. */
-    var installed=false;
-    try {
-      installed=(window.matchMedia && matchMedia('(display-mode: standalone)').matches) ||
-                navigator.standalone===true;
-    } catch(e){}
-    SHARE.on=SHARE.ok && installed;
   })();
   function downloadBlob(blob,name){
     var u=URL.createObjectURL(blob);
@@ -8831,8 +8826,8 @@
     bs.addEventListener('click', function(){
       SHARE.on=!SHARE.on;
       sync();
-      toast(SHARE.on ? 'Saves go through the share sheet — pick Photos to put them in your camera roll'
-                     : 'Saves go straight to your downloads');
+      toast(SHARE.on ? 'Saves open the share sheet — pick Photos to put them in your camera roll'
+                     : 'Saves go straight to your downloads, as before');
     });
     bh.addEventListener('click', function(){
       HDR.v.on=!HDR.v.on;
