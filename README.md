@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 34 instruments. Swipe left or right (or use the
+The rack currently holds 35 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -55,6 +55,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Thread | One line, never lifted |
 | Tide | A flow-field camera |
 | Passes | The frame taken apart |
+| Portal | A window left standing in the room |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -132,7 +133,16 @@ a single unbroken line reach all of them without ever jumping across the
 frame — so the whole picture is one stroke, and its only way to be dark is for
 the line to crowd against itself.
 
-The other 33 cameras each implement their own transform the same way —
+Portal is the one that reaches outside the frame. A rectangle is given a
+direction and a distance, and the gyroscope's orientation — a quaternion off
+`deviceorientation`, swung round to look out of the back of the phone — is all
+that is needed to project its four corners onto the screen. So it stays where
+it was left as you turn, and narrows to an edge as you come alongside it,
+without any world tracking, any SLAM, or any SDK. What it cannot know is where
+you are standing: turning works, walking does not, which is why it is a window
+and not a doorway.
+
+The other 34 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -164,7 +174,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 34 cameras. Passes draws tracking marks, but they are corner
+in any of the 35 cameras. Passes draws tracking marks, but they are corner
 detection and nothing more — the smaller eigenvalue of the structure tensor
 is large wherever the image turns in two directions at once, which is
 arithmetic, not recognition. It can tell you there is a corner there; it has
@@ -225,7 +235,9 @@ then visit `http://localhost:8000`.
 
 **Your camera feed never leaves your device.** There is no server and no
 account. Frames are processed in your browser and discarded when you close
-the tab; stills, GIFs and video save straight to your own downloads.
+the tab; stills, GIFs and video save straight to your own downloads. Portal reads the
+gyroscope to hold its window in place; that reading never leaves the browser
+either, and no camera here uses location.
 Nothing you point the camera at is transmitted anywhere, ever.
 
 The one thing that does leave: a cookieless page-view count via

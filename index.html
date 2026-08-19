@@ -6855,6 +6855,330 @@
     });
   })();
 
+  /* ---------------- PORTAL — a window standing in the room ----------------
+     The usual way to do this is world tracking: SLAM over the camera feed, a
+     plane pinned to a spot on the floor, walk around it. That needs either
+     WebXR, which iOS Safari does not have, or a commercial AR SDK — a great
+     deal of machinery to stand one rectangle on the ground.
+
+     But a phone already knows which way it is pointing. The gyroscope gives
+     an orientation many times a second, and a rectangle at a fixed direction
+     and distance projects onto the screen with ordinary pinhole arithmetic —
+     so the portal stays where it was left as you turn, and narrows to an
+     edge as you come alongside it, out of about forty lines of quaternion.
+
+     What that does not give is where you are standing: three degrees of
+     freedom, not six. Turn on the spot and the portal is nailed to the room.
+     Walk at it and it will not grow, because nothing here can tell that you
+     moved. That is the honest limit of skipping SLAM, and it is why this is
+     a window rather than a doorway.
+
+     Through it, the same view quantised to a handful of colours by an
+     ordered dither. The picture is deliberately not warped into the quad: it
+     is drawn straight through it, aligned with the room, because that is
+     what a window does — it shows what is behind it, where it already is.
+     The quad only decides how much of it you can see.
+
+     Match the lens is the setting that matters. The projection needs the
+     camera's field of view and no browser will say what it is; when it is
+     wrong the portal creeps against the room as you turn. Nudge it until the
+     portal holds still. */
+  (function(){
+    var small=mk(), out=mk(), img=null, RW=150, RH=200;
+    var v={ look:'green', size:110, dist:26, dots:150, edge:70, depth:45, lens:64 };
+
+    /* dark to light — the dither picks a rung by brightness */
+    var PAL={
+      green:[[5,12,7],[20,66,36],[70,158,88],[176,255,182]],
+      amber:[[9,5,2],[74,36,4],[186,104,10],[255,201,112]],
+      gb:[[15,56,15],[48,98,48],[139,172,15],[155,188,15]],
+      cga:[[0,0,0],[85,85,255],[255,85,255],[255,255,255]]
+    };
+    var HI={ green:'rgba(150,255,170,', amber:'rgba(255,190,90,',
+             gb:'rgba(155,188,15,', cga:'rgba(120,240,255,', full:'rgba(140,240,255,' };
+
+    var BAY=null;
+    function bayer(){
+      if(BAY) return BAY;
+      var m=[[0]],k,ss,nm,x,y,val;
+      for(k=0;k<3;k++){
+        ss=m.length; nm=[];
+        for(y=0;y<ss*2;y++) nm.push(new Array(ss*2));
+        for(y=0;y<ss;y++) for(x=0;x<ss;x++){
+          val=m[y][x]*4;
+          nm[y][x]=val; nm[y][x+ss]=val+2; nm[y+ss][x]=val+3; nm[y+ss][x+ss]=val+1;
+        }
+        m=nm;
+      }
+      BAY=new Float32Array(64);
+      for(y=0;y<8;y++) for(x=0;x<8;x++) BAY[y*8+x]=m[y][x]/64-0.5;
+      return BAY;
+    }
+
+    /* ---- which way the phone is pointing ----
+       alpha/beta/gamma are an intrinsic Z-X-Y rotation of the device. Turn
+       that into a quaternion, swing it a quarter turn so it looks out of the
+       back of the phone where the lens is, and undo the screen's own
+       rotation — otherwise the world tips over when the phone is held
+       sideways, which on a Fold is most of the time. */
+    var q=[0,0,0,1], gyroAt=0, asked=false;
+    function qMul(a,b){
+      return [ a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],
+               a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],
+               a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],
+               a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2] ];
+    }
+    function eulerYXZ(x,y,z){
+      var c1=Math.cos(x/2), c2=Math.cos(y/2), c3=Math.cos(z/2);
+      var s1=Math.sin(x/2), s2=Math.sin(y/2), s3=Math.sin(z/2);
+      return [ s1*c2*c3 + c1*s2*s3,
+               c1*s2*c3 - s1*c2*s3,
+               c1*c2*s3 - s1*s2*c3,
+               c1*c2*c3 + s1*s2*s3 ];
+    }
+    function rot(qq,p){
+      var x=p[0],y=p[1],z=p[2], qx=qq[0],qy=qq[1],qz=qq[2],qw=qq[3];
+      var ix= qw*x + qy*z - qz*y,
+          iy= qw*y + qz*x - qx*z,
+          iz= qw*z + qx*y - qy*x,
+          iw=-qx*x - qy*y - qz*z;
+      return [ ix*qw + iw*-qx + iy*-qz - iz*-qy,
+               iy*qw + iw*-qy + iz*-qx - ix*-qz,
+               iz*qw + iw*-qz + ix*-qy - iy*-qx ];
+    }
+    function conj(qq){ return [-qq[0],-qq[1],-qq[2],qq[3]]; }
+    function screenAngle(){
+      var a=0;
+      try { a=(screen.orientation && typeof screen.orientation.angle==='number')
+              ? screen.orientation.angle : (window.orientation||0); } catch(e){ a=0; }
+      return a;
+    }
+    function onOrient(e){
+      if(e.alpha===null && e.beta===null && e.gamma===null) return;
+      var D=Math.PI/180;
+      var qq=eulerYXZ((e.beta||0)*D, (e.alpha||0)*D, -(e.gamma||0)*D);
+      qq=qMul(qq,[-Math.SQRT1_2,0,0,Math.SQRT1_2]);
+      var o=-screenAngle()*D/2;
+      q=qMul(qq,[0,0,Math.sin(o),Math.cos(o)]);
+      gyroAt=now();
+    }
+    var listening=false;
+    function listen(){
+      if(listening) return;
+      listening=true;
+      try {
+        window.addEventListener('deviceorientation', onOrient, false);
+        // Chrome on Android reports absolute heading through its own event
+        window.addEventListener('deviceorientationabsolute', onOrient, false);
+      } catch(e){}
+    }
+    /* iOS hands out orientation only on request, and only from a gesture —
+       so the tap that places the portal is the tap that asks for it */
+    function askIfNeeded(){
+      if(asked) return;
+      try {
+        var D=window.DeviceOrientationEvent;
+        if(D && typeof D.requestPermission==='function'){
+          asked=true;
+          D.requestPermission()['catch'](function(){});
+        }
+      } catch(e){}
+    }
+    function haveGyro(){ return gyroAt>0 && now()-gyroAt<2000; }
+
+    /* ---- the rectangle, and where it lands on the screen ---- */
+    var dir=null;                                    // unit vector, world space
+    function focal(){ return (stage.height/2)/Math.tan((v.lens*Math.PI/180)/2); }
+    function place(nx,ny){
+      var SW=stage.width, SH=stage.height, f=focal();
+      var px=nx*SW, py=ny*SH;
+      if(srcMirror()) px=SW-px;
+      var d=rot(q,[ (px-SW/2)/f, -(py-SH/2)/f, -1 ]);
+      var n=Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2])||1;
+      dir=[d[0]/n,d[1]/n,d[2]/n];
+    }
+    /* upright, like a doorway, and turned to face where it was placed from */
+    function frameOf(){
+      var d=v.dist/10;
+      var C=[dir[0]*d, dir[1]*d, dir[2]*d];
+      var to=[-dir[0],-dir[1],-dir[2]];
+      var R=[ to[2], 0, -to[0] ];                    // world up × to, flattened
+      var rn=Math.sqrt(R[0]*R[0]+R[2]*R[2]);
+      if(rn<1e-4){ R=[1,0,0]; } else { R=[R[0]/rn,0,R[2]/rn]; }
+      var w=(v.size/100)*0.9, h=w*1.5;
+      return { C:C, R:[R[0]*w/2,0,R[2]*w/2], U:[0,h/2,0] };
+    }
+    function corners(){
+      var g=frameOf(), C=g.C, R=g.R, U=g.U;
+      return [ [C[0]-R[0]+U[0], C[1]-R[1]+U[1], C[2]-R[2]+U[2]],
+               [C[0]+R[0]+U[0], C[1]+R[1]+U[1], C[2]+R[2]+U[2]],
+               [C[0]+R[0]-U[0], C[1]+R[1]-U[1], C[2]+R[2]-U[2]],
+               [C[0]-R[0]-U[0], C[1]-R[1]-U[1], C[2]-R[2]-U[2]] ];
+    }
+
+    function build(){
+      RW=Math.max(50,Math.min(320,v.dots|0));
+      RH=Math.max(40,Math.round(RW*(stage.height/Math.max(1,stage.width))));
+      small.c.width=RW; small.c.height=RH;
+      out.c.width=RW; out.c.height=RH;
+      img=out.x.createImageData(RW,RH);
+      listen();
+    }
+
+    /* the world as it looks through the glass */
+    function retro(){
+      if(!grabInto(small,RW,RH)) return false;
+      var s=small.x.getImageData(0,0,RW,RH).data, d=img.data;
+      var bay=bayer(), pal=PAL[v.look], L=pal?pal.length-1:3;
+      var x,y,i,o,t,l,k;
+      for(y=0;y<RH;y++) for(x=0;x<RW;x++){
+        i=y*RW+x; o=i*4;
+        t=bay[((y&7)<<3)|(x&7)];
+        if(pal){
+          l=(0.2126*s[o]+0.7152*s[o+1]+0.0722*s[o+2])/255;
+          k=Math.round(l*L+t); k=k<0?0:(k>L?L:k);
+          d[o]=pal[k][0]; d[o+1]=pal[k][1]; d[o+2]=pal[k][2];
+        } else {
+          /* three bits: one bit a channel, so eight colours and no more.
+             Four levels a channel looked like grey static — with a palette
+             this small the picture has to be pushed at it, hence the
+             saturation and contrast before the dither rather than after. */
+          var r=s[o], gg=s[o+1], bb=s[o+2], mn=(r+gg+bb)/3;
+          r=(mn+(r-mn)*1.75-128)*1.3+128;
+          gg=(mn+(gg-mn)*1.75-128)*1.3+128;
+          bb=(mn+(bb-mn)*1.75-128)*1.3+128;
+          d[o]  =(r /255+t)>=0.5?255:0;
+          d[o+1]=(gg/255+t)>=0.5?255:0;
+          d[o+2]=(bb/255+t)>=0.5?255:0;
+        }
+        d[o+3]=255;
+      }
+      out.x.putImageData(img,0,0);
+      return true;
+    }
+
+    reg({
+      id:'portal', name:'Portal', line:'A window left standing in the room',
+      note:'A rectangle placed in the world and held there by the gyroscope alone — turn away and it stays where you left it, come alongside it and it narrows to an edge. Through it the same room, quantised to four colours by an ordered dither. Tap the picture to move it. It knows which way you are pointing but not where you are standing, so walking towards it will not make it any bigger; that would need the world tracking this deliberately does without. Match the lens is the setting that decides whether it holds still — the projection needs the camera\'s field of view and no browser will say what it is, so nudge it until the portal stops creeping against the room as you turn.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'look',label:'Through it',opts:[['green','Phosphor'],['amber','Amber'],['gb','Game Boy'],['cga','CGA'],['full','Colour']]},
+        {t:'sld',k:'size',label:'Portal size',min:30,max:220},
+        {t:'sld',k:'dist',label:'How far off',min:10,max:90},
+        {t:'sld',k:'dots',label:'Dots across',min:50,max:320,step:10,rebuild:true},
+        {t:'sld',k:'edge',label:'Edge glow',min:0,max:100},
+        {t:'sld',k:'depth',label:'Depth',min:0,max:100},
+        {t:'sld',k:'lens',label:'Match the lens',min:40,max:95}
+      ],
+      init:build, size:build,
+      touch:function(x,y,phase){
+        if(phase!=='down') return;
+        askIfNeeded();
+        place(x,y);
+      },
+      frame:function(){
+        var SW=stage.width, SH=stage.height;
+        drawRaw(1);                                  // the room, as it is
+        if(!retro()) return;
+        if(!dir) place(0.5,0.5);
+
+        var qi=conj(q), f=focal(), mir=srcMirror();
+        var P=[], c, z, i, cs=corners(), ok=true;
+        var x0=1e9, x1=-1e9, y0=1e9, y1=-1e9;
+        for(i=0;i<4;i++){
+          c=rot(qi,cs[i]);
+          if(c[2]>-0.05){ ok=false; break; }         // that corner is behind the lens
+          z=-c[2];
+          var sx=mir ? SW-(SW/2+f*c[0]/z) : (SW/2+f*c[0]/z), sy=SH/2-f*c[1]/z;
+          if(sx<x0)x0=sx; if(sx>x1)x1=sx; if(sy<y0)y0=sy; if(sy>y1)y1=sy;
+          P.push([sx,sy]);
+        }
+        // behind you and off to one side both come to the same thing: gone
+        var seen = ok && x1>0 && x0<SW && y1>0 && y0<SH;
+        var hi=HI[v.look]||HI.full, g=v.edge/100;
+
+        if(seen){
+          ctx.save();
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+          ctx.beginPath();
+          ctx.moveTo(P[0][0],P[0][1]);
+          for(i=1;i<4;i++) ctx.lineTo(P[i][0],P[i][1]);
+          ctx.closePath();
+          ctx.clip();
+          /* drawn square to the screen, not warped into the quad: a window
+             shows the world behind it where it already is */
+          ctx.imageSmoothingEnabled=false;
+          ctx.drawImage(out.c,0,0,SW,SH);
+          /* the far side is a room, not a sticker: darken it towards the
+             frame so the opening reads as something with a depth behind it */
+          if(v.depth>0){
+            var mx=(P[0][0]+P[1][0]+P[2][0]+P[3][0])/4, my=(P[0][1]+P[1][1]+P[2][1]+P[3][1])/4;
+            var rr=0;
+            for(i=0;i<4;i++) rr=Math.max(rr, Math.sqrt((P[i][0]-mx)*(P[i][0]-mx)+(P[i][1]-my)*(P[i][1]-my)));
+            var dk=(PAL[v.look]||PAL.green)[0], gd=ctx.createRadialGradient(mx,my,rr*0.1,mx,my,rr*0.74);
+            gd.addColorStop(0,'rgba('+dk[0]+','+dk[1]+','+dk[2]+',0)');
+            gd.addColorStop(1,'rgba('+dk[0]+','+dk[1]+','+dk[2]+','+(0.85*(v.depth/100)).toFixed(3)+')');
+            ctx.fillStyle=gd;
+            ctx.fillRect(0,0,SW,SH);
+          }
+          ctx.restore();
+
+          if(g>0){
+            ctx.save();
+            ctx.setTransform(1,0,0,1,0,0);
+            ctx.lineJoin='round';
+            ctx.beginPath();
+            ctx.moveTo(P[0][0],P[0][1]);
+            for(i=1;i<4;i++) ctx.lineTo(P[i][0],P[i][1]);
+            ctx.closePath();
+            var u=Math.min(SW,SH);
+            ctx.shadowColor=hi+'.9)'; ctx.shadowBlur=u*0.03*g;
+            ctx.strokeStyle=hi+(0.35+0.5*g)+')';
+            ctx.lineWidth=Math.max(2,u*0.011*(0.35+g));
+            ctx.stroke();
+            ctx.shadowBlur=0;
+            ctx.strokeStyle='rgba(255,255,255,'+(0.25+0.45*g)+')';
+            ctx.lineWidth=Math.max(1,u*0.003);
+            ctx.stroke();
+            ctx.restore();
+          }
+        } else {
+          /* say which way it went, because a portal you cannot find looks
+             exactly like one that was never there */
+          c=rot(qi,frameOf().C);
+          var dx, dy;
+          if(c[2]<-0.05){
+            // still in front, just outside the frame — point at where it lands
+            dx=(mir ? SW-(SW/2+f*c[0]/-c[2]) : SW/2+f*c[0]/-c[2])-SW/2;
+            dy=(SH/2-f*c[1]/-c[2])-SH/2;
+          } else {
+            dx=c[0]; dy=-c[1];
+            if(c[2]>0){ dx=-dx; dy=-dy; }             // behind you: the short way round
+            if(mir) dx=-dx;
+          }
+          var n=Math.sqrt(dx*dx+dy*dy)||1; dx/=n; dy/=n;
+          var r=Math.min(SW,SH)*0.33, a=Math.atan2(dy,dx), u2=Math.min(SW,SH);
+          ctx.save();
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.translate(SW/2+dx*r, SH/2+dy*r);
+          ctx.rotate(a);
+          ctx.strokeStyle=hi+'.85)';
+          ctx.lineWidth=Math.max(2,u2*0.008);
+          ctx.lineJoin='round'; ctx.lineCap='round';
+          ctx.beginPath();
+          ctx.moveTo(-u2*0.03,-u2*0.028); ctx.lineTo(u2*0.014,0); ctx.lineTo(-u2*0.03,u2*0.028);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        hSub.textContent = (haveGyro()?'held in the room':'no gyroscope — held to the screen')+
+          ' · '+(v.dist/10).toFixed(1)+'m out · '+v.lens+'° lens'+
+          (seen?'':(ok?' · out of frame':' · behind you'));
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
