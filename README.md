@@ -86,6 +86,16 @@ same file.
   GIFs and clips. It's off unless you turn it on, and every export goes
   through the one function that draws it, so there's nowhere else it can come
   back from.
+- **The shutter asks the camera for a photograph.** The preview deliberately
+  runs at 1.2 megapixels, because every camera pulls every frame through it
+  and a bigger feed costs frame rate — measured, not assumed: One Bit falls
+  from 60fps to 27 when the live track is raised to 1600×1200. So the
+  resolution goes where it costs one second instead of every frame. Gamut and
+  Stain develop from an `ImageCapture` still at the camera's own size, where
+  the browser has one (Chrome does, Safari doesn't) and where its shape
+  matches the preview's — otherwise the framing would stop matching what you
+  saw, and a sharper picture of the wrong thing is not an improvement. Either
+  way it falls back quietly to the live frame.
 - **Extra white.** Exports a still as an Ultra HDR JPEG — an ordinary SDR
   image with a gain map appended, so HDR screens can drive the highlights
   past white. A mask overlay (`Show mask`) previews which pixels will burn.
@@ -131,6 +141,13 @@ The palette is built by walking the same Hilbert curve through all
 bijection between pixels and colours, not an approximation. The whole thing
 runs in about 10 milliseconds a frame using a precomputed lookup table and a
 two-pass radix sort.
+
+Gamut's **Grain** sets how many pixels that plate has, not how many across.
+It used to set the width and let the screen's shape supply the height, which
+meant one setting developed a full plate on a tall phone and half of one on a
+square screen: unfold a folding phone and the photograph quietly got worse for
+no reason anyone could see. Fixing the area and dividing it by the shape makes
+the setting mean the same thing on any screen.
 
 Stain runs that same sort over part of a frame instead of all of it. Whatever
 the selection comes to, the palette is built to exactly that many colours and
