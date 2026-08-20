@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 35 instruments. Swipe left or right (or use the
+The rack currently holds 36 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -56,6 +56,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Tide | A flow-field camera |
 | Passes | The frame taken apart |
 | Portal | A window left standing in the room |
+| Stain | Every colour, in one place |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -81,6 +82,10 @@ same file.
   export mode go the same way. The sheet needs the shutter press still to be
   live, so a slow full-resolution develop falls back to a download and says
   so.
+- **Signature.** `Signature` stamps YOSHI CAMERA into the corner of stills,
+  GIFs and clips. It's off unless you turn it on, and every export goes
+  through the one function that draws it, so there's nowhere else it can come
+  back from.
 - **Extra white.** Exports a still as an Ultra HDR JPEG — an ordinary SDR
   image with a gain map appended, so HDR screens can drive the highlights
   past white. A mask overlay (`Show mask`) previews which pixels will burn.
@@ -127,6 +132,13 @@ bijection between pixels and colours, not an approximation. The whole thing
 runs in about 10 milliseconds a frame using a precomputed lookup table and a
 two-pass radix sort.
 
+Stain runs that same sort over part of a frame instead of all of it. Whatever
+the selection comes to, the palette is built to exactly that many colours and
+each is spent once — so a small stain gets coarser steps between neighbours,
+never fewer colours to pick from. The selection itself is decided at grid size
+and scaled up, which is what lets the shutter develop at full resolution
+without changing what you chose.
+
 Thread walks the same curve, but through space instead of colour. It scatters
 stitches by darkness and then visits them in Hilbert order, which is what lets
 a single unbroken line reach all of them without ever jumping across the
@@ -142,7 +154,7 @@ without any world tracking, any SLAM, or any SDK. What it cannot know is where
 you are standing: turning works, walking does not, which is why it is a window
 and not a doorway.
 
-The other 34 cameras each implement their own transform the same way —
+The other 35 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -174,8 +186,12 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 35 cameras. Passes draws tracking marks, but they are corner
-detection and nothing more — the smaller eigenvalue of the structure tensor
+in any of the 36 cameras. Stain looks like segmentation and isn't: your finger
+does the choosing, and the camera only works out what "like that" means —
+the same colour, the same brightness, whatever is moving, or simply here. A
+tap is a perfectly good selection when the person tapping can see the picture,
+and it needs no model to be one. Passes draws tracking marks, but they are
+corner detection and nothing more — the smaller eigenvalue of the structure tensor
 is large wherever the image turns in two directions at once, which is
 arithmetic, not recognition. It can tell you there is a corner there; it has
 no idea it is an eye. Passes has no depth layer for the same reason: depth

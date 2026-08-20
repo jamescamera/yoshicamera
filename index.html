@@ -617,6 +617,7 @@
       <button class="b on" id="bFmt">MP4</button>
       <button class="b" id="bAspect">Screen</button>
       <button class="b" id="bShare" style="display:none">Share sheet</button>
+      <button class="b" id="bMark">Signature</button>
       <button class="b" id="bHdr">Extra white</button>
       <button class="b" id="bMask">Show mask</button>
       <button class="b" id="bRot">Rot the file</button>
@@ -748,8 +749,11 @@
   /* a small chunky mark in the corner of every still, GIF frame and video
      frame this app saves — sized off the shorter side so it reads the same
      whether the export is a 240px GIF or a 12-megapixel plate */
+  /* off by default. Every still, GIF frame and clip goes through this one
+     function, so there is nowhere else the mark can come back from. */
+  var MARK={ on:false };
   function stampMark(g,w,h){
-    if(!w||!h) return;
+    if(!MARK.on || !w || !h) return;
     var s=Math.min(w,h), size=Math.max(8,Math.min(30,Math.round(s*0.02)));
     var pad=Math.max(6,Math.round(size*0.9));
     g.save();
@@ -1071,6 +1075,11 @@
      ===================================================================== */
   var CAMS=[];
   function reg(o){ CAMS.push(o); }
+
+  /* Gamut's ranking and its palette, handed out so Stain can run the same
+     sort over part of a frame instead of all of it — one implementation of
+     the idea, not two copies of it that drift apart */
+  var GAMUTKIT=null;
 
   /* ---------------- GAMUT — every colour, exactly once ---------------- */
   (function(){
@@ -1464,6 +1473,9 @@
         btn.className='';
       }, 60);
     }
+
+    GAMUTKIT={ keyExact:keyExact, radix:radix, buildPalette:buildPalette,
+               orderPalette:orderPalette, coherentOrder:coherentOrder, tileFor:tileFor };
 
     reg({
       id:'gamut', name:'Gamut', line:'Every colour, once',
@@ -7179,6 +7191,330 @@
     });
   })();
 
+  /* ---------------- STAIN — every colour, in one place ----------------
+     Gamut spends the whole palette on the whole frame. This spends it on
+     part of one: the picture stays as it was, and a chosen region erupts.
+
+     There is no subject detection here and there could not be — that needs
+     a model, and this app does not have one. What it has instead is your
+     finger. Tap something and the camera works out what "like that" means
+     four ways: the same colour, the same brightness, whatever is moving, or
+     simply here. A tap is a perfectly good segmentation when the person
+     tapping can see the picture.
+
+     The rule survives the narrowing. However many pixels the selection
+     comes to, the palette is built to exactly that many colours spread
+     through the whole cube, and each is spent once — so a small stain gets
+     coarser steps between neighbouring colours, not fewer colours to choose
+     from. The count in the status line is both things at once: how many
+     pixels were picked, and how many colours were spent on them.
+
+     The mask is always worked out at grid size and then scaled up, which is
+     what lets the shutter develop at full resolution: the selection stays
+     the one you could see, and only the sort is redone at size. */
+  (function(){
+    var small=mk(), work=mk(), mlo=mk(), mhi=mk(), sdn=mk(), sup=mk();
+    var gw=2, gh=2, prev=null, acc=null;
+    var sample=null, spot={x:0.5,y:0.5};
+    var palBig=null, palN=0;
+    var lastPick=0, lastPct=0;
+    var v={ pick:'like', side:'in', around:'keep', spread:34, soft:40, agit:18, clump:14, grain:220 };
+
+    function build(){
+      gw=Math.max(60,Math.min(420,Math.round(v.grain)));
+      gh=Math.max(50,Math.round(gw*(H/Math.max(1,W))));
+      if(small.c.width!==gw || small.c.height!==gh){ small.c.width=gw; small.c.height=gh; }
+      prev=null; acc=null; palBig=null; palN=0;
+    }
+
+    /* ---- what counts as picked ----
+       Every rule ends up as one number a pixel: 1 fully in, 0 fully out,
+       and the values between are the edge, which is what stops the stain
+       looking like a sticker cut with scissors. */
+    function maskFrom(d,n){
+      var m=new Float32Array(n), i,o,x,y,r,g,b,l,dd,tol,inner;
+      var sp=v.spread/100, sf=v.soft/100;
+      if(v.pick==='spot'){
+        var cx=spot.x*gw, cy=spot.y*gh;
+        var rad=(0.06+sp*0.7)*Math.max(gw,gh), soft=Math.max(1,sf*rad*0.9);
+        for(y=0;y<gh;y++) for(x=0;x<gw;x++){
+          i=y*gw+x;
+          dd=Math.sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy));
+          l=(rad-dd)/soft;
+          m[i]=l<0?0:(l>1?1:l);
+        }
+        return m;
+      }
+      if(v.pick==='move'){
+        /* a frame difference on its own flickers — a moving edge is only
+           different for the instant it crosses a pixel. So the difference
+           is kept and allowed to fade, which makes the selection stick to
+           whatever has been moving rather than to this one frame. */
+        if(!prev || prev.length!==n){ prev=new Float32Array(n); acc=new Float32Array(n); }
+        tol=3+(1-sp)*46;
+        for(i=0;i<n;i++){
+          o=i*4;
+          l=0.2126*d[o]+0.7152*d[o+1]+0.0722*d[o+2];
+          dd=Math.abs(l-prev[i]);
+          prev[i]=prev[i]*0.5+l*0.5;
+          dd=Math.max(dd, acc[i]*0.88);
+          acc[i]=dd;
+          l=dd/tol;
+          m[i]=l<0?0:(l>1?1:l);
+        }
+        return blur(m,n);
+      }
+      if(!sample) sampleAt(d,0.5,0.5);
+      tol=(v.pick==='tone') ? (6+sp*74) : (8+sp*86);
+      inner=Math.max(0.5,tol*sf*0.85);
+      for(i=0;i<n;i++){
+        o=i*4; r=d[o]; g=d[o+1]; b=d[o+2];
+        l=0.2126*r+0.7152*g+0.0722*b;
+        if(v.pick==='tone') dd=Math.abs(l-sample.l);
+        else {
+          /* hue and how strong it is, with brightness allowed only a small
+             say — otherwise picking a red coat picks its shadow as a
+             different colour, which is not what anyone means by "that" */
+          dd=Math.sqrt(Math.pow((-0.169*r-0.331*g+0.5*b)-sample.cb,2)+
+                       Math.pow((0.5*r-0.419*g-0.081*b)-sample.cr,2))+Math.abs(l-sample.l)*0.35;
+        }
+        l=(tol-dd)/inner;
+        m[i]=l<0?0:(l>1?1:l);
+      }
+      return blur(m,n);
+    }
+    /* a box blur, twice, which is close enough to a soft edge */
+    function blur(m,n){
+      var r=Math.round((v.soft/100)*gw*0.045);
+      if(r<1) return m;
+      var t=new Float32Array(n), x,y,i,sum,k;
+      for(y=0;y<gh;y++){
+        sum=0;
+        for(k=-r;k<=r;k++) sum+=m[y*gw+clamp(k,0,gw-1)];
+        for(x=0;x<gw;x++){
+          t[y*gw+x]=sum/(r*2+1);
+          sum+=m[y*gw+clamp(x+r+1,0,gw-1)]-m[y*gw+clamp(x-r,0,gw-1)];
+        }
+      }
+      for(x=0;x<gw;x++){
+        sum=0;
+        for(k=-r;k<=r;k++) sum+=t[clamp(k,0,gh-1)*gw+x];
+        for(y=0;y<gh;y++){
+          m[y*gw+x]=sum/(r*2+1);
+          sum+=t[clamp(y+r+1,0,gh-1)*gw+x]-t[clamp(y-r,0,gh-1)*gw+x];
+        }
+      }
+      return m;
+    }
+    function sampleAt(d,nx,ny){
+      var x=clamp(Math.round(nx*gw),0,gw-1), y=clamp(Math.round(ny*gh),0,gh-1), o=(y*gw+x)*4;
+      var r=d[o], g=d[o+1], b=d[o+2];
+      sample={ r:r, g:g, b:b,
+               l:0.2126*r+0.7152*g+0.0722*b,
+               cb:-0.169*r-0.331*g+0.5*b,
+               cr:0.5*r-0.419*g-0.081*b };
+    }
+
+    /* the mask is decided at grid size and carried up to whatever size the
+       picture is being made at, so the shutter develops the selection you
+       were actually looking at */
+    function maskTo(m,bw,bh){
+      if(bw===gw && bh===gh) return m;
+      if(mlo.c.width!==gw || mlo.c.height!==gh){ mlo.c.width=gw; mlo.c.height=gh; }
+      var im=mlo.x.createImageData(gw,gh), d=im.data, i, o, k;
+      for(i=0;i<gw*gh;i++){ o=i*4; k=Math.round(m[i]*255); d[o]=d[o+1]=d[o+2]=k; d[o+3]=255; }
+      mlo.x.putImageData(im,0,0);
+      if(mhi.c.width!==bw || mhi.c.height!==bh){ mhi.c.width=bw; mhi.c.height=bh; }
+      mhi.x.imageSmoothingEnabled=true;
+      mhi.x.drawImage(mlo.c,0,0,bw,bh);
+      var bd=mhi.x.getImageData(0,0,bw,bh).data, out=new Float32Array(bw*bh);
+      for(i=0;i<bw*bh;i++) out[i]=bd[i*4]/255;
+      return out;
+    }
+
+    /* Clump ranks the sort off a softened copy while the palette still lands
+       on the real pixels, so neighbours take neighbouring colours and a flat
+       surface marbles instead of coming apart into confetti. Down and back
+       up through the canvas is the cheapest blur there is. */
+    function softened(o,bw,bh){
+      var k=(v.clump<=0)?1:1+Math.round((v.clump/100)*7);
+      if(k<=1) return null;
+      var sw=Math.max(1,Math.ceil(bw/k)), sh=Math.max(1,Math.ceil(bh/k));
+      if(sdn.c.width!==sw || sdn.c.height!==sh){ sdn.c.width=sw; sdn.c.height=sh; }
+      if(sup.c.width!==bw || sup.c.height!==bh){ sup.c.width=bw; sup.c.height=bh; }
+      sdn.x.imageSmoothingEnabled=true; sup.x.imageSmoothingEnabled=true;
+      try {
+        sdn.x.drawImage(o.c,0,0,sw,sh);
+        sup.x.drawImage(sdn.c,0,0,bw,bh);
+        return sup.x.getImageData(0,0,bw,bh).data;
+      } catch(e){ return null; }
+    }
+
+    /* buildPalette spreads n colours evenly along the curve, so every nth
+       entry of a big one is itself an even spread — which means the palette
+       can be built once for the grid and re-cut to whatever the selection
+       came to this frame, instead of rebuilt from scratch sixty times a
+       second */
+    function paletteFor(m,total){
+      var K=GAMUTKIT;
+      if(total<=0) return null;
+      if(!palBig || palN!==total){ palBig=K.orderPalette(K.buildPalette(total),'hilbert'); palN=total; }
+      if(m===total) return palBig;
+      var out=new Int32Array(m), st=total/m, i;
+      for(i=0;i<m;i++) out[i]=palBig[Math.min(total-1,Math.floor(i*st))];
+      return out;
+    }
+
+    /* o holds the picture already, at bw×bh; msk is the same size */
+    function applyStain(o,bw,bh,msk,fresh){
+      var K=GAMUTKIT;
+      if(!K) return 0;
+      var img=o.x.getImageData(0,0,bw,bh), s=img.data, n=bw*bh;
+      var i,j,idx,ofs,a,l,cc,m=0;
+      if(v.side==='out') for(i=0;i<n;i++) msk[i]=1-msk[i];
+      for(i=0;i<n;i++) if(msk[i]>0.02) m++;
+      if(m<32){ o.x.putImageData(img,0,0); return 0; }
+
+      var co=K.coherentOrder(bw,bh);
+      var init=new Int32Array(m), keys=new Int32Array(n);
+      j=0;
+      for(i=0;i<n;i++){ idx=co[i]; if(msk[idx]>0.02) init[j++]=idx; }
+      /* ranked off the picture as it came in, before the rest of it is
+         drained or dimmed — otherwise a feathered edge would be ranked by
+         a colour that is half treatment */
+      var ck=softened(o,bw,bh);
+      /* Noise on the key, never on the output — the same trick Gamut uses,
+         and the reason a smooth sky comes out in contours rather than in
+         flat bands. It moves which pixel receives a colour, not which
+         colours exist, so nothing is spent twice. */
+      var amt=(v.agit>0)?Math.pow(v.agit/100,1.5)*70:0;
+      var nt=amt>0?K.tileFor('blue'):null, nx, ny, rr, gg2, bb2, kk;
+      for(j=0;j<m;j++){
+        idx=init[j]; ofs=idx*4; kk=ck||s;
+        rr=kk[ofs]; gg2=kk[ofs+1]; bb2=kk[ofs+2];
+        if(amt>0){
+          nx=idx%bw; ny=(idx/bw)|0;
+          rr +=nt[((ny&63)<<6)|(nx&63)]*amt;
+          gg2+=nt[(((ny+23)&63)<<6)|((nx+17)&63)]*amt;
+          bb2+=nt[(((ny+41)&63)<<6)|((nx+29)&63)]*amt;
+        }
+        keys[idx]=K.keyExact(rr<0?0:(rr>255?255:rr|0),
+                             gg2<0?0:(gg2>255?255:gg2|0),
+                             bb2<0?0:(bb2>255?255:bb2|0),'hilbert');
+      }
+      var order=K.radix(keys,m,8,3,init);
+
+      /* the rest of the picture, before anything is spent on the stain */
+      if(v.around!=='keep'){
+        for(i=0;i<n;i++){
+          a=1-msk[i];
+          if(a<=0.01) continue;
+          ofs=i*4;
+          if(v.around==='grey'){
+            l=0.2126*s[ofs]+0.7152*s[ofs+1]+0.0722*s[ofs+2];
+            s[ofs]  =s[ofs]  *(1-a)+l*a;
+            s[ofs+1]=s[ofs+1]*(1-a)+l*a;
+            s[ofs+2]=s[ofs+2]*(1-a)+l*a;
+          } else {
+            l=1-a*0.68;
+            s[ofs]*=l; s[ofs+1]*=l; s[ofs+2]*=l;
+          }
+        }
+      }
+
+      var pal=fresh ? K.orderPalette(K.buildPalette(m),'hilbert') : paletteFor(m,n);
+      for(j=0;j<m;j++){
+        idx=order[j]; ofs=idx*4; cc=pal[j]; a=msk[idx];
+        if(a>0.998){
+          s[ofs]=(cc>>16)&255; s[ofs+1]=(cc>>8)&255; s[ofs+2]=cc&255;
+        } else {
+          s[ofs]  =s[ofs]  *(1-a)+((cc>>16)&255)*a;
+          s[ofs+1]=s[ofs+1]*(1-a)+((cc>>8)&255)*a;
+          s[ofs+2]=s[ofs+2]*(1-a)+(cc&255)*a;
+        }
+        s[ofs+3]=255;
+      }
+      o.x.putImageData(img,0,0);
+      return m;
+    }
+
+    function liveMask(){
+      var d=small.x.getImageData(0,0,gw,gh).data;
+      return { d:d, m:maskFrom(d,gw*gh) };
+    }
+
+    /* the shutter: the selection stays as seen, the sort is redone at size */
+    function develop(){
+      var btn=document.getElementById('bShot');
+      btn.className='busy';
+      toast('Developing…');
+      setTimeout(function(){
+        try {
+          if(!grabInto(small,gw,gh)) throw new Error('no frame');
+          var lm=liveMask();
+          var bw,bh,lim=2200000;
+          if(PHOTO.on()){
+            var f=clamp(v.grain/340,0.25,1);
+            bw=Math.max(2,Math.round(PHOTO.w()*f)); bh=Math.max(2,Math.round(PHOTO.h()*f));
+            lim=PHOTO.cap();
+          } else {
+            bw=Math.max(2,stage.width); bh=Math.max(2,stage.height);
+          }
+          var nn=bw*bh, kk;
+          if(nn>lim){ kk=Math.sqrt(lim/nn); bw=Math.round(bw*kk); bh=Math.round(bh*kk); }
+          if(work.c.width!==bw || work.c.height!==bh){ work.c.width=bw; work.c.height=bh; }
+          if(!grabInto(work,bw,bh)) throw new Error('no frame');
+          var big=maskTo(lm.m,bw,bh);
+          var m=applyStain(work,bw,bh,big,true);
+          shellFlash();
+          shellSaveCanvas(work.c, fileName('stain','png'),
+            m ? (commas(m)+' colours · stained') : 'Nothing picked — saved as it was');
+        } catch(e){
+          toast('Not enough memory at that size — lower the grain and shoot again');
+        }
+        btn.className='';
+      },60);
+    }
+
+    reg({
+      id:'stain', name:'Stain', line:'Every colour, in one place',
+      note:'Gamut, but spent on part of the picture instead of all of it. There is no subject detection in here and there could not be — that needs a model, and nothing in this app has one. Your finger does the job instead: tap something and the camera takes it to mean that colour, that brightness, whatever is moving, or simply there, depending on what you have it set to. However many pixels end up picked, the palette is built to exactly that many colours and each is spent once, so the rule holds inside the stain the same way it holds across a whole Gamut frame. Everything else can be left alone, drained of its colour, or dimmed, depending on how loudly you want the stain to shout. The shutter develops at full size, with the selection you could already see.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'pick',label:'Tap means',opts:[['like','That colour'],['tone','That brightness'],['move','What moves'],['spot','There']]},
+        {t:'seg',k:'side',label:'Stain',opts:[['in','What I picked'],['out','Everything else']]},
+        {t:'seg',k:'around',label:'The rest',opts:[['keep','Left alone'],['grey','Drained'],['dark','Dimmed']]},
+        {t:'sld',k:'spread',label:'How much counts',min:0,max:100},
+        {t:'sld',k:'soft',label:'Edge',min:0,max:100},
+        {t:'sld',k:'agit',label:'Agitate',min:0,max:100},
+        {t:'sld',k:'clump',label:'Clump',min:0,max:100},
+        {t:'sld',k:'grain',label:'Grain',min:60,max:420,step:10,rebuild:true}
+      ],
+      init:build, size:build,
+      shoot:develop,
+      touch:function(x,y,phase){
+        if(v.pick==='spot'){ spot.x=clamp(x,0,1); spot.y=clamp(y,0,1); return; }
+        if(phase!=='down') return;
+        if(v.pick==='move'){ acc=null; prev=null; return; }   // a tap starts it over
+        if(small.c.width!==gw) return;
+        try { sampleAt(small.x.getImageData(0,0,gw,gh).data, x, y); } catch(e){}
+      },
+      frame:function(){
+        if(small.c.width!==gw || small.c.height!==gh) build();
+        if(!grabInto(small,gw,gh)) return;
+        var lm=liveMask();
+        var m=applyStain(small,gw,gh,lm.m,false);
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+        ctx.imageSmoothingEnabled=true;
+        ctx.drawImage(small.c,0,0,stage.width,stage.height);
+        if(now()-lastPick>200){ lastPick=now(); lastPct=Math.round(m/(gw*gh)*100); }
+        hSub.textContent = m ? (lastPct+'% of the frame · '+commas(m)+' colours, one each')
+                             : 'nothing picked — tap what you want';
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
@@ -9128,7 +9464,9 @@
     var bw=document.getElementById('bRotRaw');
     var rf=document.getElementById('rotField'), ra=document.getElementById('rotAmt'), rv=document.getElementById('rotVal');
     var bs=document.getElementById('bShare');
+    var bk=document.getElementById('bMark');
     function sync(){
+      bk.className=MARK.on?'b on':'b';
       /* no button where the browser has no file sharing to offer — iOS
          Safari and Chrome on Android have it, most desktops do too, but a
          browser without it would only get a control that does nothing */
@@ -9147,6 +9485,12 @@
       rv.textContent=ROT.amount;
       buildHardware();
     }
+    bk.addEventListener('click', function(){
+      MARK.on=!MARK.on;
+      sync();
+      toast(MARK.on ? 'YOSHI CAMERA in the corner of stills, GIFs and clips'
+                    : 'Saving without the signature');
+    });
     bs.addEventListener('click', function(){
       SHARE.on=!SHARE.on;
       sync();
