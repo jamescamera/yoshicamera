@@ -733,6 +733,16 @@
   var SLOW_DEVICE=IS_ANDROID||OLD_IOS;
   var LOW_MEMORY=IS_PHONE && ((!!navigator.deviceMemory && navigator.deviceMemory<=4) ||
                  (IS_IOS && CORES<=2));
+  /* How big a still may be developed. Deliberately larger than the screen —
+     the canvas is a preview, not the photograph — but never far past what
+     the lens actually handed over, because pixels invented by a scaler are
+     not detail. Twice the sensor's own count is the ceiling: enough for a
+     sort to have room, not enough to pretend. */
+  function devCap(){ return LOW_MEMORY ? 1800000 : (SLOW_DEVICE ? 3400000 : 4200000); }
+  function devTarget(){
+    var sw=srcW()||1280, sh=srcH()||960;
+    return Math.max(400000, Math.min(devCap(), Math.round(sw*sh*2)));
+  }
   /* a held frame is a whole canvas — 46 of them at phone resolution is well
      over 100MB, which is what actually kills these cameras */
   function histCap(){ return LOW_MEMORY?18:(SLOW_DEVICE?26:(IS_PHONE?32:46)); }
@@ -1027,7 +1037,7 @@
   /* a file is not a mirror — only the front lens gets flipped. The first
      stage of a chain already mirrored (or didn't) as appropriate, so the
      second stage must never mirror its already-composed input again */
-  function srcMirror(){ if(chainSrc) return false; return !PHOTO.on() && facing==='user'; }
+  function srcMirror(){ if(chainSrc) return !!chainSrc.mirror; return !PHOTO.on() && facing==='user'; }
 
   /* pull a mirrored, cover-cropped frame into any surface */
   function grabInto(o, w, h){
@@ -1408,12 +1418,20 @@
       var btn=document.getElementById('bShot');
       btn.className='busy';
       toast('Developing…');
-      setTimeout(function(){
+      setTimeout(function(){ fullFrame(function(){
         try{
           var aspect=H/Math.max(W,1);
-          var bw=Math.round(Math.min(1100,Math.max(400,v.grain*5)));
-          var bh=Math.round(bw*aspect);
-          var lim=2200000;
+          /* Grain sets how many pixels, not how many across. It used to set
+             the width and let the screen's shape supply the height, so the
+             same setting developed a full plate on a tall phone and half of
+             one on a square screen — unfold a folding phone and the
+             photograph quietly got worse for no reason anybody could see.
+             Fixing the area and dividing it by the shape makes the setting
+             mean one thing on any screen. */
+          var target=Math.min(devTarget(), Math.round(v.grain*v.grain*29.4));
+          var bw=Math.max(2,Math.round(Math.sqrt(target/aspect)));
+          var bh=Math.max(2,Math.round(bw*aspect));
+          var lim=devCap();
           /* an imported file is developed at its own size, not at a size
              guessed from the screen — that is the whole point of feeding it
              a real camera's picture. Grain still scales it, so the message in
@@ -1471,7 +1489,7 @@
             ? 'Not enough memory at that size — lower the grain and shoot again'
             : 'Not enough memory — lower the grain'); }
         btn.className='';
-      }, 60);
+      }); }, 60);
     }
 
     GAMUTKIT={ keyExact:keyExact, radix:radix, buildPalette:buildPalette,
@@ -1479,7 +1497,7 @@
 
     reg({
       id:'gamut', name:'Gamut', line:'Every colour, once',
-      note:'A palette with exactly as many colours as there are pixels, every one spent, none twice. The shutter develops a much larger frame — a second or two. Dither moves the sort order, not the output, so the rule still holds. Clump lets the sort listen to a softened copy of the picture, so neighbouring pixels take neighbouring colours instead of every speck of grain being ranked as if it were detail — turn it up in the dark, down for confetti. Local detail judges each pixel against its surroundings rather than against the whole frame, so a patch that was one flat colour gets the run of the entire palette. It is the same idea as HDR, pushed until it stops being reasonable.',
+      note:'A palette with exactly as many colours as there are pixels, every one spent, none twice. The shutter asks the camera for a full-size photograph and develops that — a second or two. Dither moves the sort order, not the output, so the rule still holds. Clump lets the sort listen to a softened copy of the picture, so neighbouring pixels take neighbouring colours instead of every speck of grain being ranked as if it were detail — turn it up in the dark, down for confetti. Local detail judges each pixel against its surroundings rather than against the whole frame, so a patch that was one flat colour gets the run of the entire palette. It is the same idea as HDR, pushed until it stops being reasonable.',
       v:v,
       ctrl:[
         {t:'seg',k:'order',label:'Thread',opts:[['hilbert','Hilbert'],['luma','Luma'],['hue','Hue']]},
@@ -6965,14 +6983,36 @@
               ? screen.orientation.angle : (window.orientation||0); } catch(e){ a=0; }
       return a;
     }
+    /* Two event types carry this on Android — deviceorientation and
+       deviceorientationabsolute — and they do NOT agree: one reports a
+       heading referred to the compass, the other to wherever the phone
+       happened to be. Listening to both means the portal is told two
+       different stories many times a second and flickers between them. So
+       the first one to arrive wins, unless the absolute one turns up, which
+       is worth switching to once and never leaving: it is the one that does
+       not drift. */
+    var oriType=null;
     function onOrient(e){
       if(e.alpha===null && e.beta===null && e.gamma===null) return;
+      if(e.type==='deviceorientationabsolute') oriType=e.type;
+      else if(oriType===null) oriType=e.type;
+      if(e.type!==oriType) return;
       var D=Math.PI/180;
       var qq=eulerYXZ((e.beta||0)*D, (e.alpha||0)*D, -(e.gamma||0)*D);
       qq=qMul(qq,[-Math.SQRT1_2,0,0,Math.SQRT1_2]);
       var o=-screenAngle()*D/2;
-      q=qMul(qq,[0,0,Math.sin(o),Math.cos(o)]);
+      qq=qMul(qq,[0,0,Math.sin(o),Math.cos(o)]);
+      /* and a little smoothing on top, because a compass a couple of degrees
+         noisy is a portal that shivers where it stands */
+      q = gyroAt ? nlerp(q,qq,0.4) : qq;
       gyroAt=now();
+    }
+    function nlerp(a,b,t){
+      var d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3], sg=d<0?-1:1, i, o=[0,0,0,0], n=0;
+      for(i=0;i<4;i++){ o[i]=a[i]*(1-t)+b[i]*sg*t; n+=o[i]*o[i]; }
+      n=Math.sqrt(n)||1;
+      for(i=0;i<4;i++) o[i]/=n;
+      return o;
     }
     var listening=false;
     function listen(){
@@ -7213,7 +7253,7 @@
      what lets the shutter develop at full resolution: the selection stays
      the one you could see, and only the sort is redone at size. */
   (function(){
-    var small=mk(), work=mk(), mlo=mk(), mhi=mk(), sdn=mk(), sup=mk();
+    var small=mk(), work=mk(), sdn=mk(), sup=mk();
     var gw=2, gh=2, prev=null, acc=null;
     var sample=null, spot={x:0.5,y:0.5};
     var palBig=null, palN=0;
@@ -7320,15 +7360,23 @@
        were actually looking at */
     function maskTo(m,bw,bh){
       if(bw===gw && bh===gh) return m;
-      if(mlo.c.width!==gw || mlo.c.height!==gh){ mlo.c.width=gw; mlo.c.height=gh; }
-      var im=mlo.x.createImageData(gw,gh), d=im.data, i, o, k;
-      for(i=0;i<gw*gh;i++){ o=i*4; k=Math.round(m[i]*255); d[o]=d[o+1]=d[o+2]=k; d[o+3]=255; }
-      mlo.x.putImageData(im,0,0);
-      if(mhi.c.width!==bw || mhi.c.height!==bh){ mhi.c.width=bw; mhi.c.height=bh; }
-      mhi.x.imageSmoothingEnabled=true;
-      mhi.x.drawImage(mlo.c,0,0,bw,bh);
-      var bd=mhi.x.getImageData(0,0,bw,bh).data, out=new Float32Array(bw*bh);
-      for(i=0;i<bw*bh;i++) out[i]=bd[i*4]/255;
+      /* bilinear by hand rather than through a canvas: the canvas route
+         wanted an ImageData in, a scaled draw, and a full readback out —
+         three buffers the size of the finished picture, to carry one number
+         a pixel. At develop size that was most of the shutter's wait. */
+      var out=new Float32Array(bw*bh);
+      var sx=gw/bw, sy=gh/bh, x,y,fx,fy,x0,y0,x1,y1,tx,ty,r0,r1;
+      for(y=0;y<bh;y++){
+        fy=(y+0.5)*sy-0.5; y0=Math.floor(fy); ty=fy-y0;
+        if(y0<0){ y0=0; ty=0; } y1=y0+1; if(y1>gh-1) y1=gh-1;
+        for(x=0;x<bw;x++){
+          fx=(x+0.5)*sx-0.5; x0=Math.floor(fx); tx=fx-x0;
+          if(x0<0){ x0=0; tx=0; } x1=x0+1; if(x1>gw-1) x1=gw-1;
+          r0=m[y0*gw+x0]+(m[y0*gw+x1]-m[y0*gw+x0])*tx;
+          r1=m[y1*gw+x0]+(m[y1*gw+x1]-m[y1*gw+x0])*tx;
+          out[y*bw+x]=r0+(r1-r0)*ty;
+        }
+      }
       return out;
     }
 
@@ -7448,17 +7496,21 @@
       var btn=document.getElementById('bShot');
       btn.className='busy';
       toast('Developing…');
-      setTimeout(function(){
+      setTimeout(function(){ fullFrame(function(){
         try {
           if(!grabInto(small,gw,gh)) throw new Error('no frame');
           var lm=liveMask();
-          var bw,bh,lim=2200000;
+          var bw,bh,lim=devCap();
           if(PHOTO.on()){
             var f=clamp(v.grain/340,0.25,1);
             bw=Math.max(2,Math.round(PHOTO.w()*f)); bh=Math.max(2,Math.round(PHOTO.h()*f));
             lim=PHOTO.cap();
           } else {
-            bw=Math.max(2,stage.width); bh=Math.max(2,stage.height);
+            /* the stage is a preview of about a megapixel; developing at its
+               size threw away most of what the lens had handed over */
+            var asp=stage.height/Math.max(1,stage.width);
+            bw=Math.max(2,Math.round(Math.sqrt(devTarget()/asp)));
+            bh=Math.max(2,Math.round(bw*asp));
           }
           var nn=bw*bh, kk;
           if(nn>lim){ kk=Math.sqrt(lim/nn); bw=Math.round(bw*kk); bh=Math.round(bh*kk); }
@@ -7473,7 +7525,7 @@
           toast('Not enough memory at that size — lower the grain and shoot again');
         }
         btn.className='';
-      },60);
+      }); },60);
     }
 
     reg({
@@ -8163,6 +8215,11 @@
   }
 
   function askCam(fm){
+    /* The preview stays at 1.2 megapixels on purpose. Asking the live track
+       for more costs real frame rate — measured, not guessed: One Bit went
+       from 60fps to 27 at 1600×1200 — because every camera pulls every frame
+       through grabInto. The resolution belongs at the shutter instead, where
+       it costs one second rather than every frame; see fullFrame() below. */
     var v2={ width:{ideal:1280}, height:{ideal:960} };
     if(fm) v2.facingMode=fm;
     return navigator.mediaDevices.getUserMedia({ video:v2, audio:false });
@@ -9014,6 +9071,46 @@
      this through the same helper is what keeps "rot the file" genuinely
      app-wide instead of quietly skipping the founding camera. */
   function shellSaveCanvas(c,n,m){ saveStillCanvas(c,n,m); }
+
+  /* ---------- the shutter's own frame ----------
+     The preview runs at 1.2 megapixels because every camera pulls every
+     frame through grabInto, and a bigger one costs frame rate — measured,
+     not assumed: One Bit fell from 60fps to 27 when the live track was
+     asked for 1600×1200. A still has no such problem. ImageCapture asks the
+     camera for a photograph at its own size without disturbing the preview
+     at all: one request, a couple of hundred milliseconds, and a develop
+     has real detail to work from instead of a scaler's guesses.
+
+     Two ways out, both quiet. Safari has no ImageCapture, and some Android
+     cameras refuse or hang — hence the timeout. And if the photograph comes
+     back a different shape from the preview the framing can no longer be
+     trusted to match what was on screen, so it is dropped: a sharper
+     picture of the wrong thing is not an improvement. */
+  var photoCap=null, photoTrack=null;
+  function fullFrame(done){
+    var live=function(){ try { done(); } catch(e){} };
+    try {
+      if(PHOTO.on() || typeof ImageCapture==='undefined' || !stream){ live(); return; }
+      var tr=stream.getVideoTracks()[0];
+      if(!tr){ live(); return; }
+      if(photoTrack!==tr){ photoCap=new ImageCapture(tr); photoTrack=tr; }
+      var settled=false;
+      var timer=setTimeout(function(){ if(!settled){ settled=true; live(); } }, 2600);
+      photoCap.takePhoto()
+        .then(function(b){ return createImageBitmap(b); })
+        .then(function(bmp){
+          if(settled) return;
+          settled=true; clearTimeout(timer);
+          var vw=srcW(), vh=srcH();
+          var same = bmp && bmp.width && vw && vh &&
+                     Math.abs((bmp.width/bmp.height)/(vw/vh)-1) < 0.03;
+          if(!same || bmp.width*bmp.height <= vw*vh){ if(bmp&&bmp.close) try{bmp.close();}catch(e){} live(); return; }
+          chainSrc={ el:bmp, w:bmp.width, h:bmp.height, mirror:(facing==='user') };
+          try { done(); }
+          finally { chainSrc=null; try { bmp.close(); } catch(e){} }
+        })['catch'](function(){ if(!settled){ settled=true; clearTimeout(timer); live(); } });
+    } catch(e){ live(); }
+  }
   /* everything this app makes is called the same thing, so it groups in a
      camera roll: YoshiCamera-<camera>-<date>-<time>.<ext> */
   function fileName(tag,ext){
