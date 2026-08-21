@@ -202,6 +202,14 @@ many of its neighbours belong to a different wash, and that count is the rim.
 Edges are crooked because the picture is sampled through a warp before it is
 quantised, rather than being drawn cleanly and roughened afterwards.
 
+Both edges — the rim and the ink line — are continuous quantities rather than
+per-pixel tests, which is what keeps them from arriving on screen as
+staircases. The rim compares the wash coordinate against a blurred copy of
+itself, so it varies smoothly and widens where the tone turns slowly, exactly
+as a real one does. The line is a full Sobel, so it has no preferred
+direction, and it is bled and then pulled back in: a soft edge on something
+that is still a line.
+
 The other 37 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
