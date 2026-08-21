@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 37 instruments. Swipe left or right (or use the
+The rack currently holds 38 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -58,6 +58,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Portal | A window left standing in the room |
 | Stain | Every colour, in one place |
 | Impasto | Paint with a thickness to it |
+| Wash | Pigment on wet paper |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -188,7 +189,20 @@ it picks the brush back up. Nothing is ever wiped — wet strokes go down over
 dry ones — so the canvas is a record of everything it has seen since you last
 tapped it.
 
-The other 36 cameras each implement their own transform the same way —
+Wash is the opposite of Impasto in every respect, which is what watercolour
+is. Nothing sits on top: each layer is transparent, so pigment multiplies the
+paper rather than covering it and the white of the paper is the only light in
+the picture — every unit of density is one more glaze, and the picture can only
+darken as pigment is added. The tone is laid in a few flat washes with the hue
+kept and the saturation lifted, because pigment out of a pan is stronger than
+the thing it depicts. The detail that gives the medium away is the **wash
+edge**: as a wash dries, pigment is carried to its boundary and stranded there,
+so every shape is outlined in a darker version of itself. Each pixel counts how
+many of its neighbours belong to a different wash, and that count is the rim.
+Edges are crooked because the picture is sampled through a warp before it is
+quantised, rather than being drawn cleanly and roughened afterwards.
+
+The other 37 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -220,7 +234,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 37 cameras. Stain looks like segmentation and isn't: your finger
+in any of the 38 cameras. Stain looks like segmentation and isn't: your finger
 does the choosing, and the camera only works out what "like that" means —
 the same colour, the same brightness, whatever is moving, or simply here. A
 tap is a perfectly good selection when the person tapping can see the picture,
