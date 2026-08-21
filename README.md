@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 36 instruments. Swipe left or right (or use the
+The rack currently holds 37 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -57,6 +57,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Passes | The frame taken apart |
 | Portal | A window left standing in the room |
 | Stain | Every colour, in one place |
+| Impasto | Paint with a thickness to it |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -171,7 +172,23 @@ without any world tracking, any SLAM, or any SDK. What it cannot know is where
 you are standing: turning works, walking does not, which is why it is a window
 and not a doorway.
 
-The other 35 cameras each implement their own transform the same way —
+Impasto is the one that paints rather than filters, and it does two things
+no other camera here does. It keeps a **height** alongside the colour — every
+stroke deposits into it, and a lighting pass at the end turns that height into
+surface normals and rakes a light across them. That is the whole difference
+between a picture of a painting and a smear filter: ridges catch the light and
+furrows hold shadow, so a brush that was loaded reads as loaded.
+
+And it **paints by disagreement**. Each frame it measures how far the canvas is
+from what the lens sees and lays the next strokes where the gap is worst, which
+is the old painterly-rendering trick and exactly right for a camera: hold still
+and the error falls until more strokes stop improving it, at which point the
+brush is put down and nothing is painted at all. Move, and the error climbs and
+it picks the brush back up. Nothing is ever wiped — wet strokes go down over
+dry ones — so the canvas is a record of everything it has seen since you last
+tapped it.
+
+The other 36 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -203,7 +220,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 36 cameras. Stain looks like segmentation and isn't: your finger
+in any of the 37 cameras. Stain looks like segmentation and isn't: your finger
 does the choosing, and the camera only works out what "like that" means —
 the same colour, the same brightness, whatever is moving, or simply here. A
 tap is a perfectly good selection when the person tapping can see the picture,

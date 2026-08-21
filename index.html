@@ -7567,6 +7567,352 @@
     });
   })();
 
+  /* ---------------- IMPASTO — paint with a thickness to it ----------------
+     Three painterly cameras are already in here and every one of them is
+     flat: ink on a surface. What makes oil paint look like oil paint is not
+     the brush shape, it is that the paint stands up off the canvas and
+     catches the light. So this one keeps two pictures at once — the colour,
+     and a height — and lights the height at the end. Ridges take the light,
+     troughs hold shadow, and the same strokes that would read as a smear
+     filter read as a loaded brush.
+
+     It paints by disagreement. Every frame it compares what is on the canvas
+     with what the lens is showing and puts the next strokes wherever the two
+     differ most, which is the old painterly-rendering trick and exactly the
+     right one for a camera: hold the phone still and the painting converges
+     and then stops, finishing itself in a few seconds. Move, and the paint
+     chases the change — wet strokes going down over dry ones, the canvas
+     never starting again from nothing. A camera that rewards standing still
+     is a different animal from a filter that redraws every frame.
+
+     Strokes run along the picture's own structure, from the same tensor
+     Tide uses: gradients, outer product, smoothed, and the minor eigenvector
+     is the direction along which the image changes least — which is the
+     direction a painter's hand would take.
+
+     Colour is mixed as pigment rather than as light. Two wet colours pull
+     towards their product instead of their average, so overlapping strokes
+     muddy the way paint muddies and the canvas does not drift towards grey
+     the longer you paint. */
+  (function(){
+    var small=mk(), out=mk(), img=null, gw=2, gh=2, N=0;
+    var col=null, hgt=null, ex=null, ey=null, coh=null;
+    var lum=null, tE=null, tF=null, tG=null, tmp=null;
+    var painted=0, quiet=0, errNow=0, settled=0, done=false, restAt=0;
+    var litAt=-1, reliefAt=-1, wet=0, tick=0, errMark=0;
+    var v={ ground:'linen', bristles:5, load:58, length:30, settle:54, relief:72, light:132, grain:320 };
+
+    var GROUNDS={ linen:[232,224,206], gesso:[246,245,242], ochre:[196,166,116], charcoal:[38,36,34] };
+
+    function build(){
+      gw=Math.max(120,Math.min(560,Math.round(v.grain)));
+      gh=Math.max(100,Math.round(gw*(H/Math.max(1,W))));
+      N=gw*gh;
+      if(small.c.width!==gw || small.c.height!==gh){ small.c.width=gw; small.c.height=gh; }
+      if(out.c.width!==gw || out.c.height!==gh){ out.c.width=gw; out.c.height=gh; }
+      img=out.x.createImageData(gw,gh);
+      col=new Float32Array(N*3); hgt=new Float32Array(N);
+      ex=new Float32Array(N); ey=new Float32Array(N); coh=new Float32Array(N);
+      lum=new Float32Array(N); tE=new Float32Array(N); tF=new Float32Array(N);
+      tG=new Float32Array(N); tmp=new Float32Array(N);
+      clear();
+    }
+    function clear(){
+      var g=GROUNDS[v.ground]||GROUNDS.linen, i;
+      for(i=0;i<N;i++){ col[i*3]=g[0]; col[i*3+1]=g[1]; col[i*3+2]=g[2]; hgt[i]=0; }
+      painted=0; quiet=0; settled=0; done=false; restAt=0; wet=0; errMark=0;
+    }
+
+    function box(a,r){
+      if(r<1) return;
+      var x,y,i,sum,k,inv=1/(r*2+1);
+      for(y=0;y<gh;y++){
+        sum=0;
+        for(k=-r;k<=r;k++) sum+=a[y*gw+clamp(k,0,gw-1)];
+        for(x=0;x<gw;x++){
+          tmp[y*gw+x]=sum*inv;
+          sum+=a[y*gw+clamp(x+r+1,0,gw-1)]-a[y*gw+clamp(x-r,0,gw-1)];
+        }
+      }
+      for(x=0;x<gw;x++){
+        sum=0;
+        for(k=-r;k<=r;k++) sum+=tmp[clamp(k,0,gh-1)*gw+x];
+        for(y=0;y<gh;y++){
+          a[y*gw+x]=sum*inv;
+          sum+=tmp[clamp(y+r+1,0,gh-1)*gw+x]-tmp[clamp(y-r,0,gh-1)*gw+x];
+        }
+      }
+    }
+
+    /* the direction the picture changes least, which is the way a brush
+       would go: gradients, their outer product, smoothed, minor eigenvector */
+    function flow(s){
+      var x,y,i,o,gx,gy;
+      for(i=0;i<N;i++){ o=i*4; lum[i]=0.2126*s[o]+0.7152*s[o+1]+0.0722*s[o+2]; }
+      for(y=0;y<gh;y++) for(x=0;x<gw;x++){
+        i=y*gw+x;
+        gx=lum[y*gw+Math.min(gw-1,x+1)]-lum[y*gw+Math.max(0,x-1)];
+        gy=lum[Math.min(gh-1,y+1)*gw+x]-lum[Math.max(0,y-1)*gw+x];
+        tE[i]=gx*gx; tF[i]=gx*gy; tG[i]=gy*gy;
+      }
+      var r=Math.max(2,Math.round(gw/90));
+      box(tE,r); box(tF,r); box(tG,r);
+      var th,a,b2,c2,sum;
+      for(i=0;i<N;i++){
+        th=0.5*Math.atan2(2*tF[i], tE[i]-tG[i]) + Math.PI/2;   // minor axis
+        /* How much direction is actually there. On a flat wall the tensor is
+           all noise and atan2(0,0) is zero, which is why an early version
+           combed the whole sky into horizontal streaks — the picture had no
+           opinion and the arithmetic gave one anyway. Below, a slow swirl
+           stands in for the painter's hand, and the two are blended by how
+           much the picture really has to say. */
+        a=tE[i]-tG[i]; b2=2*tF[i]; sum=tE[i]+tG[i];
+        c2=sum>1e-6 ? Math.sqrt(a*a+b2*b2)/sum : 0;
+        coh[i]=c2;
+        ex[i]=Math.cos(th); ey[i]=Math.sin(th);
+      }
+    }
+    /* a smooth, slowly turning field — no noise texture, just two sines that
+       never line up, which is enough to keep a brush from marching */
+    function hand(x,y){
+      return 0.9*Math.sin(x*0.021+y*0.013) + 0.7*Math.cos(y*0.017-x*0.009) + 1.1;
+    }
+    function dirAt(i,x,y,ox,oy){
+      var c=coh[i], dx=ex[i], dy=ey[i], t, a, hx, hy;
+      if(c<0.34){
+        t=1-c/0.34;
+        a=hand(x,y); hx=Math.cos(a); hy=Math.sin(a);
+        if(hx*dx+hy*dy<0){ hx=-hx; hy=-hy; }
+        dx=dx*(1-t)+hx*t; dy=dy*(1-t)+hy*t;
+      }
+      if(ox||oy){ if(dx*ox+dy*oy<0){ dx=-dx; dy=-dy; } }
+      var m=Math.sqrt(dx*dx+dy*dy)||1;
+      return [dx/m,dy/m];
+    }
+
+    /* pigment, not light: two wet colours pull towards their product, so
+       overlaps darken instead of averaging towards grey */
+    function lay(i,r,g,b,t,h,ht){
+      /* Pulling the mix towards the product of the two colours is the usual
+         cheap way to fake pigment, and it is wrong in a way that only shows
+         up after a few thousand strokes: c×c/255 is darker than c, so paint
+         laid over ITSELF still darkened, and the whole canvas crept towards
+         black — the error against the scene climbing the longer it painted.
+         Darkening in proportion to how far apart the two colours are gets
+         the same muddying where pigments actually differ, and leaves paint
+         alone where it does not. */
+      var i3=i*3, m=t*(1-t)*4*0.34, c0,c1;
+      c0=col[i3];   c1=r; col[i3]  =c0*(1-t)+c1*t-m*Math.abs(c0-c1)*0.5;
+      c0=col[i3+1]; c1=g; col[i3+1]=c0*(1-t)+c1*t-m*Math.abs(c0-c1)*0.5;
+      c0=col[i3+2]; c1=b; col[i3+2]=c0*(1-t)+c1*t-m*Math.abs(c0-c1)*0.5;
+      if(col[i3]<0)col[i3]=0; if(col[i3+1]<0)col[i3+1]=0; if(col[i3+2]<0)col[i3+2]=0;
+      /* Height is laid with a much sharper falloff than colour. Colour wants
+         to cover; height wants to keep the furrow a bristle leaves beside
+         itself, and if both used the same soft edge the strokes would fill
+         in each other's grooves and the finished canvas would light up flat.
+         The relief you can see in a half-worked painting has to survive
+         being painted over. */
+      var hh=hgt[i]*(1-0.22*ht)+h*ht;
+      hgt[i]=hh>2.2?2.2:hh;                   // paint piles up, but not forever
+    }
+    function stamp(x,y,r,g,b,a,h,rad){
+      var x0=Math.max(0,Math.floor(x-rad)), x1=Math.min(gw-1,Math.ceil(x+rad));
+      var y0=Math.max(0,Math.floor(y-rad)), y1=Math.min(gh-1,Math.ceil(y+rad));
+      var px,py,dx,dy,d,w,t;
+      for(py=y0;py<=y1;py++){
+        dy=py+0.5-y;
+        for(px=x0;px<=x1;px++){
+          dx=px+0.5-x;
+          d=Math.sqrt(dx*dx+dy*dy);
+          if(d>rad) continue;
+          w=1-d/rad;
+          t=a*Math.sqrt(w);                   // a loaded brush has an edge to it
+          if(t<0.004) continue;
+          lay(py*gw+px, r,g,b, t>1?1:t, h, a*w*w);
+        }
+      }
+    }
+
+    /* one stroke: a bundle of bristles, following the flow, carrying the
+       colour it found where it started */
+    function sampleCol(s,x,y,out3){
+      /* a brush picks up an area, not a pixel — and a single pixel of sensor
+         noise painted across a whole stroke is very visible */
+      var x0=Math.max(0,x-1), x1=Math.min(gw-1,x+1), y0=Math.max(0,y-1), y1=Math.min(gh-1,y+1);
+      var px,py,o,r=0,g=0,b=0,k=0;
+      for(py=y0;py<=y1;py++) for(px=x0;px<=x1;px++){
+        o=(py*gw+px)*4; r+=s[o]; g+=s[o+1]; b+=s[o+2]; k++;
+      }
+      out3[0]=r/k; out3[1]=g/k; out3[2]=b/k;
+    }
+    var sc=[0,0,0];
+    function strokeAt(s,i0){
+      var x=(i0%gw)+0.5, y=((i0/gw)|0)+0.5, o=i0*4;
+      sampleCol(s,(i0%gw),(i0/gw)|0,sc);
+      /* every stroke is mixed slightly differently on the palette, which is
+         most of why a painted surface never looks flat */
+      var vary=(Math.random()-0.5)*12, warm=(Math.random()-0.5)*8;
+      var r0=sc[0]+vary+warm, g0=sc[1]+vary, b0=sc[2]+vary-warm;
+      var nb=Math.max(1,Math.min(9,Math.round(v.bristles)));
+      var load=0.25+0.6*(v.load/100);
+      var hAdd=0.25+2.2*(v.load/100);
+      var rad=1.05+(v.load/100)*0.85;
+      var steps=Math.max(2,Math.round((3+(v.length/100)*0.13*gw)*(0.65+Math.random()*0.7)));
+      var d0=dirAt(i0,x,y,0,0), dx=d0[0], dy=d0[1], ii, nd, m, k, b, off, jr, jg, jb, sp=rad*1.55;
+      /* nobody rules perfectly parallel lines with a brush, and a field of
+         them reads as combing rather than as paint */
+      var tw=(Math.random()-0.5)*0.34, cw=Math.cos(tw), sw=Math.sin(tw), tx=dx;
+      dx=dx*cw-dy*sw; dy=tx*sw+dy*cw;
+      var px=x-dx*steps*0.5, py=y-dy*steps*0.5;                 // start behind, so the seed is mid-stroke
+      for(k=0;k<steps;k++){
+        if(px<0||py<0||px>=gw||py>=gh) break;
+        ii=((py|0)*gw+(px|0));
+        nd=dirAt(ii,px,py,dx,dy);                               // never doubles back
+        dx=dx*0.55+nd[0]*0.45; dy=dy*0.55+nd[1]*0.45;
+        m=Math.sqrt(dx*dx+dy*dy)||1; dx/=m; dy/=m;
+        for(b=0;b<nb;b++){
+          off=(b-(nb-1)/2)*sp;
+          jr=r0+(b%3-1)*5; jg=g0+((b+1)%3-1)*5; jb=b0+((b+2)%3-1)*5;
+          stamp(px-dy*off, py+dx*off, jr,jg,jb, load, hAdd, rad);
+        }
+        px+=dx*1.25; py+=dy*1.25;
+      }
+      painted++;
+    }
+
+    /* light it. Height becomes a surface normal by central difference, and
+       the whole illusion is one dot product and a tight highlight. */
+    function relight(){
+      var d=img.data;
+      var ang=v.light*Math.PI/180, lx=Math.cos(ang), ly=Math.sin(ang), lz=0.66;
+      var m=Math.sqrt(lx*lx+ly*ly+lz*lz); lx/=m; ly/=m; lz/=m;
+      var hx=lx, hy=ly, hz=lz+1; m=Math.sqrt(hx*hx+hy*hy+hz*hz); hx/=m; hy/=m; hz/=m;
+      var rel=0.35+(v.relief/100)*3.4;
+      var x,y,i,o,l,r2,nx,ny,nz,dif,spc,sh,wob,c;
+      for(y=0;y<gh;y++) for(x=0;x<gw;x++){
+        i=y*gw+x; o=i*4;
+        /* the tooth of the canvas itself, so bare ground is not glassy. It
+           has to be hashed rather than periodic — an earlier version used
+           (x*7+y*13)&7, which repeats every few pixels and reads as scan
+           lines across the whole picture. */
+        wob=(((x*1836311903+y*2654435761)>>>13&255)/255-0.5)*0.05;
+        l=hgt[i+(x>0?-1:0)]-hgt[i+(x<gw-1?1:0)]+wob;
+        r2=hgt[i-(y>0?gw:0)]-hgt[i+(y<gh-1?gw:0)]+wob;
+        nx=l*rel; ny=r2*rel; nz=1;
+        m=Math.sqrt(nx*nx+ny*ny+1); nx/=m; ny/=m; nz=1/m;
+        dif=nx*lx+ny*ly+nz*lz; if(dif<0) dif=0;
+        spc=nx*hx+ny*hy+nz*hz; if(spc<0) spc=0;
+        spc=spc*spc; spc=spc*spc; spc=spc*spc; spc=spc*spc;       // ^16, a wet highlight not a glow
+        spc*=Math.min(1,hgt[i]*0.8)*42;
+        sh=0.74+0.46*dif;
+        c=col[i*3]*sh+spc;     d[o]  =c<0?0:(c>255?255:c);
+        c=col[i*3+1]*sh+spc;   d[o+1]=c<0?0:(c>255?255:c);
+        c=col[i*3+2]*sh+spc;   d[o+2]=c<0?0:(c>255?255:c);
+        d[o+3]=255;
+      }
+      out.x.putImageData(img,0,0);
+    }
+
+    reg({
+      id:'impasto', name:'Impasto', line:'Paint with a thickness to it',
+      note:'The paint here has height as well as colour, and the height is lit at the end — which is the whole difference between a picture of a painting and a smear filter. It paints by disagreement: every frame it compares the canvas against what the lens sees and lays the next strokes where they differ most, so holding the phone still lets the painting converge and finish itself, while moving sends the brush after whatever changed. Nothing is ever wiped; wet strokes go down over dry ones. Strokes run along the direction the picture changes least, worked out from the same structure tensor Tide uses. Colour mixes as pigment rather than as light, so overlaps muddy instead of averaging towards grey. Drag on the picture to rake the light across the surface; tap to scrape the canvas back to bare ground.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'ground',label:'Ground',opts:[['linen','Linen'],['gesso','Gesso'],['ochre','Ochre'],['charcoal','Charcoal']],rebuild:true},
+        {t:'sld',k:'bristles',label:'Bristles',min:1,max:9},
+        {t:'sld',k:'load',label:'Load',min:0,max:100},
+        {t:'sld',k:'length',label:'Stroke',min:0,max:100},
+        {t:'sld',k:'settle',label:'How fast it settles',min:0,max:100},
+        {t:'sld',k:'relief',label:'Relief',min:0,max:100},
+        {t:'sld',k:'light',label:'Light',min:0,max:359},
+        {t:'sld',k:'grain',label:'Grain',min:120,max:560,step:20,rebuild:true}
+      ],
+      init:build, size:build,
+      touch:function(x,y,phase){
+        if(phase==='down'){ clear(); return; }
+        var a=Math.atan2(y-0.5,x-0.5)*180/Math.PI;              // drag rakes the light
+        v.light=Math.round((a+360)%360);
+      },
+      frame:function(){
+        if(small.c.width!==gw || small.c.height!==gh) build();
+        if(!grabInto(small,gw,gh)) return;
+        var s=small.x.getImageData(0,0,gw,gh).data;
+        /* the direction field is the expensive part of the frame — three box
+           blurs over the grid — and a finished painting has no use for it */
+        if(!done) flow(s);
+
+        /* How far off is the canvas, over the whole picture? Sampled every
+           eleventh pixel, which is plenty for a number that only has to say
+           whether the painting is still improving. */
+        var i,e,k,x,y,laid=0, sum=0, cnt=0;
+        for(i=0;i<N;i+=11){
+          sum+=Math.abs(col[i*3]-s[i*4])+Math.abs(col[i*3+1]-s[i*4+1])+Math.abs(col[i*3+2]-s[i*4+2]);
+          cnt++;
+        }
+        errNow=sum/Math.max(1,cnt);
+
+        /* A painting is never going to match a photograph pixel for pixel —
+           every stroke is mixed a little differently on purpose, so there is
+           a floor under the error that no amount of painting gets below.
+           Chasing zero just churns paint forever, which is what an earlier
+           version did: 46,000 strokes and the error climbing.
+
+           So the brush goes where the canvas is worse than its own average,
+           not where it differs from the photograph. That threshold moves
+           with the painting: bare canvas is nearly all above it, a worked
+           canvas has only its difficult corners left, and a stroke that
+           would not improve on the average is never laid. When almost
+           nothing qualifies for a while, the painting is finished. */
+        /* Finished is not "every pixel matches" and not "few strokes
+           qualify" either — the first never happens and the second is true
+           of a bare canvas, which is how an earlier version came to declare
+           a nearly empty painting done. It is simply that the error has
+           stopped falling. Compared over half a second, so one frame's
+           worth of noise cannot end it. */
+        tick++;
+        if(done){
+          if(errNow>restAt*1.12+2){ done=false; settled=0; wet=0; errMark=0; flow(s); }
+        } else if((tick%30)===0){
+          if(errMark>0 && (errMark-errNow)/errMark < 0.015) settled++; else settled=0;
+          errMark=errNow;
+          if(settled>=2){ done=true; restAt=errNow; }
+        }
+
+        if(!done){
+          /* where does the canvas disagree with the world? Strokes go there.
+             Six candidates and the worst wins — cheaper than keeping a sorted
+             error map, and just as good when hundreds of strokes land a
+             second. */
+          /* One sample a stroke, not the worst of several: the worst of six
+             is far above the average by construction, so it cleared any
+             threshold set against the average no matter how good the
+             painting had got, and the brush never stopped. A single sample
+             has the same spread as the picture does, so the share that
+             clears the bar falls exactly as the canvas evens out. */
+          var K=Math.round(8+(v.settle/100)*120);
+          var thr=Math.max(12, errNow*(0.95-(v.settle/100)*0.35));
+          for(k=0;k<K;k++){
+            x=(Math.random()*gw)|0; y=(Math.random()*gh)|0; i=y*gw+x;
+            e=Math.abs(col[i*3]-s[i*4])+Math.abs(col[i*3+1]-s[i*4+1])+Math.abs(col[i*3+2]-s[i*4+2]);
+            if(e<thr) continue;               // no worse than the canvas already is
+            strokeAt(s,i);
+            laid++;
+          }
+          wet=wet*0.9+laid*0.1;
+        }
+        quiet = laid ? 0 : Math.min(60,quiet+1);
+
+        if(!done || v.light!==litAt || v.relief!==reliefAt){ relight(); litAt=v.light; reliefAt=v.relief; }
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+        ctx.imageSmoothingEnabled=true;
+        ctx.drawImage(out.c,0,0,stage.width,stage.height);
+        hSub.textContent = done ? (commas(painted)+' strokes · finished — move to repaint')
+                                : (commas(painted)+' strokes · '+laid+' wet');
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
