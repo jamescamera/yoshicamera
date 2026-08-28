@@ -210,6 +210,22 @@ as a real one does. The line is a full Sobel, so it has no preferred
 direction, and it is bled and then pulled back in: a soft edge on something
 that is still a line.
 
+Impasto has a second implementation of itself on the GPU, in WebGL2, which
+runs where there is a real graphics card underneath. Dabs become instanced
+quads blended into two targets — colour over what is there, height added to it
+— and the lighting becomes one full-screen pass, so the paint can live at twice
+the size of the screen rather than a quarter of it. The CPU keeps the part that
+is a decision rather than arithmetic: a small error map comes back from the GPU
+each frame, coarse on purpose, and the next strokes are aimed with it.
+
+WebGL2 rather than WebGPU deliberately: nothing here needs a compute shader,
+and WebGL2 runs on essentially every phone that can open the site. It refuses
+to start on a software rasteriser — Chrome falls back to one on machines whose
+drivers it will not trust, and there every fragment costs more than the
+JavaScript it replaced — and it times its own first twenty frames, standing
+down for the session if it is not comfortably inside the frame budget. The
+picture is the same either way.
+
 The other 37 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.

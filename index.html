@@ -7621,6 +7621,7 @@
       var g=GROUNDS[v.ground]||GROUNDS.linen, i;
       for(i=0;i<N;i++){ col[i*3]=g[0]; col[i*3+1]=g[1]; col[i*3+2]=g[2]; hgt[i]=0; }
       painted=0; quiet=0; settled=0; done=false; restAt=0; wet=0; errMark=0;
+      if(gpuOn && G && PW) gpuClear();
     }
 
     function box(a,r){
@@ -7813,6 +7814,371 @@
       out.x.putImageData(img,0,0);
     }
 
+    /* ================= the same painting, on the GPU =================
+       Everything above is JavaScript walking over pixels, which is why the
+       canvas is a 320-wide grid and why a dab costs what it costs. None of
+       that work is sequential though: dabs do not care what order they land
+       in, and lighting a height field is the same arithmetic at every pixel.
+       That is a description of a GPU.
+
+       WebGL2 rather than WebGPU, deliberately. This needs no compute
+       shaders — dabs are quads with blending, lighting is one full-screen
+       pass — and WebGL2 runs on essentially every phone that can open the
+       site, including iOS, where WebGPU still cannot be relied on. The
+       ceiling here is not the API, it is that a JavaScript loop was doing
+       fragment work.
+
+       What it buys, concretely: the paint lives at twice the size of the
+       screen instead of a quarter of it, so the shutter has something worth
+       saving; strokes stop being rationed; and the lighting pass, which is
+       most of a frame in JavaScript, becomes free.
+
+       What the CPU still does — and should: choosing where the paint is
+       wrong, which is a decision, not arithmetic. That comes back from the
+       GPU as a small error map, coarse on purpose, because it only has to
+       be good enough to aim at. */
+    var G=null, gpuTried=false, gcan=null, PW=0, PH=0, gpuOn=false;
+    var gpuT=[], gpuJudged=false;
+    var DABS=null, dabN=0, DABMAX=26000, EW=24, EH=52, errPix=null;
+
+    var VS_DAB=
+      '#version 300 es\n'+
+      'in vec2 aCorner; in vec2 aCentre; in float aRad; in vec3 aCol; in vec2 aAmt;'+
+      'uniform vec2 uRes; out vec2 vC; out vec3 vCol; out vec2 vAmt;'+
+      'void main(){ vec2 p=aCentre+aCorner*aRad; vec2 c=(p/uRes)*2.0-1.0;'+
+      ' gl_Position=vec4(c.x,-c.y,0.0,1.0); vC=aCorner; vCol=aCol; vAmt=aAmt; }';
+    var FS_DAB=
+      '#version 300 es\nprecision highp float;'+
+      'in vec2 vC; in vec3 vCol; in vec2 vAmt; uniform int uMode; out vec4 o;'+
+      'void main(){ float r=length(vC); if(r>1.0) discard; float w=1.0-r;'+
+      /* colour takes a soft edge, height a much sharper one — the same
+         reason as the JavaScript version: bristle furrows have to survive
+         being painted over or the finished canvas lights up flat */
+      ' if(uMode==0) o=vec4(vCol, vAmt.x*sqrt(w));'+
+      ' else o=vec4(vAmt.y*w*w, 0.0, 0.0, 1.0); }';
+    var VS_FULL=
+      '#version 300 es\n'+
+      'in vec2 aPos; out vec2 vUV;'+
+      'void main(){ vUV=aPos*0.5+0.5; gl_Position=vec4(aPos,0.0,1.0); }';
+    var FS_LIGHT=
+      '#version 300 es\nprecision highp float;'+
+      'in vec2 vUV; uniform sampler2D uCol, uHgt; uniform vec2 uTexel;'+
+      'uniform vec3 uLight, uHalf; uniform float uRelief; out vec4 o;'+
+      'float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }'+
+      'float hg(vec2 uv){ return min(texture(uHgt,uv).r,2.2); }'+
+      'void main(){ vec3 c=texture(uCol,vUV).rgb;'+
+      ' float hc=hg(vUV);'+
+      ' float tooth=(hash(floor(vUV/uTexel))-0.5)*0.05;'+
+      ' vec3 n=normalize(vec3((hg(vUV-vec2(uTexel.x,0.0))-hg(vUV+vec2(uTexel.x,0.0))+tooth)*uRelief,'+
+      '                       (hg(vUV-vec2(0.0,uTexel.y))-hg(vUV+vec2(0.0,uTexel.y))+tooth)*uRelief, 1.0));'+
+      ' float dif=max(dot(n,uLight),0.0);'+
+      ' float sp=pow(max(dot(n,uHalf),0.0),16.0)*min(1.0,hc*0.8)*0.165;'+
+      ' o=vec4(c*(0.74+0.46*dif)+sp, 1.0); }';
+    var FS_ERR=
+      '#version 300 es\nprecision highp float;'+
+      'in vec2 vUV; uniform sampler2D uCol, uSrc; uniform vec2 uJit; out vec4 o;'+
+      'float d1(vec2 uv){ vec3 a=texture(uCol,uv).rgb, b=texture(uSrc,uv).rgb;'+
+      ' return (abs(a.r-b.r)+abs(a.g-b.g)+abs(a.b-b.b))/3.0; }'+
+      'void main(){ float e=d1(vUV+uJit*vec2(-0.31,-0.17))+d1(vUV+uJit*vec2(0.29,-0.23))'+
+      '            +d1(vUV+uJit*vec2(-0.19,0.33))+d1(vUV+uJit*vec2(0.27,0.21));'+
+      ' o=vec4(e*0.25,0.0,0.0,1.0); }';
+
+    function shader(gl,t,src){
+      var s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)||'compile');
+      return s;
+    }
+    function prog(gl,vs,fs){
+      var p=gl.createProgram();
+      gl.attachShader(p,shader(gl,gl.VERTEX_SHADER,vs));
+      gl.attachShader(p,shader(gl,gl.FRAGMENT_SHADER,fs));
+      gl.linkProgram(p);
+      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)||'link');
+      return p;
+    }
+    function tex(gl,w,h,internal,fmt,type,filter){
+      var t=gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D,t);
+      gl.texImage2D(gl.TEXTURE_2D,0,internal,w,h,0,fmt,type,null);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,filter);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,filter);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      return t;
+    }
+    function fbo(gl,t){
+      var f=gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+      return f;
+    }
+
+    function gpuGet(){
+      if(gpuTried) return G;
+      gpuTried=true;
+      try {
+        if(LOW_MEMORY) return null;                 // leave the weakest phones alone
+        gcan=document.createElement('canvas');
+        var gl=gcan.getContext('webgl2',{alpha:false,antialias:false,depth:false,
+                                         preserveDrawingBuffer:true,powerPreference:'high-performance'});
+        if(!gl) return null;
+        if(!gl.getExtension('EXT_color_buffer_float')) return null;
+        /* A context is not a graphics card. Chrome falls back to SwiftShader
+           — a rasteriser running on the CPU — on machines whose drivers it
+           will not trust, and there the whole argument for this path is
+           inverted: every fragment costs more than the JavaScript it was
+           meant to replace. Ask what is actually underneath. */
+        var dbg=gl.getExtension('WEBGL_debug_renderer_info');
+        var rend=(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '')+'';
+        if(/swiftshader|llvmpipe|software|basic render/i.test(rend)) return null;
+        var g={ gl:gl };
+        g.pDab=prog(gl,VS_DAB,FS_DAB);
+        g.pLight=prog(gl,VS_FULL,FS_LIGHT);
+        g.pErr=prog(gl,VS_FULL,FS_ERR);
+        g.quad=gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,g.quad);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]),gl.STATIC_DRAW);
+        g.inst=gl.createBuffer();
+        g.vaoDab=gl.createVertexArray();
+        gl.bindVertexArray(g.vaoDab);
+        gl.bindBuffer(gl.ARRAY_BUFFER,g.quad);
+        var aCorner=gl.getAttribLocation(g.pDab,'aCorner');
+        gl.enableVertexAttribArray(aCorner); gl.vertexAttribPointer(aCorner,2,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ARRAY_BUFFER,g.inst);
+        /* one dab per instance: centre, radius, colour, alpha, deposit */
+        var st=8*4, off=0, loc;
+        [['aCentre',2],['aRad',1],['aCol',3],['aAmt',2]].forEach(function(a){
+          loc=gl.getAttribLocation(g.pDab,a[0]);
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc,a[1],gl.FLOAT,false,st,off);
+          gl.vertexAttribDivisor(loc,1);
+          off+=a[1]*4;
+        });
+        gl.bindVertexArray(null);
+        g.vaoFull=gl.createVertexArray();
+        gl.bindVertexArray(g.vaoFull);
+        gl.bindBuffer(gl.ARRAY_BUFFER,g.quad);
+        var aPos=gl.getAttribLocation(g.pLight,'aPos');
+        gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+        gl.bindVertexArray(null);
+        g.texSrc=tex(gl,4,4,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.LINEAR);
+        g.texErr=tex(gl,EW,EH,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.NEAREST);
+        g.fboErr=fbo(gl,g.texErr);
+        errPix=new Uint8Array(EW*EH*4);
+        DABS=new Float32Array(DABMAX*8);
+        G=g;
+      } catch(e){ G=null; }
+      return G;
+    }
+
+    function gpuSize(){
+      var g=G, gl=g.gl;
+      /* paint at twice the screen and let it be drawn down: the preview gets
+         free anti-aliasing and the shutter gets something worth keeping,
+         instead of a still at the size of a phone canvas */
+      var cap=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),2048);
+      var w=Math.min(cap,Math.round(stage.width*2)), h=Math.min(cap,Math.round(stage.height*2));
+      var px=w*h, lim=4200000;
+      if(px>lim){ var k=Math.sqrt(lim/px); w=Math.round(w*k); h=Math.round(h*k); }
+      if(w===PW && h===PH) return;
+      PW=w; PH=h;
+      gcan.width=PW; gcan.height=PH;
+      if(g.texCol) gl.deleteTexture(g.texCol);
+      if(g.texHgt) gl.deleteTexture(g.texHgt);
+      if(g.fboCol) gl.deleteFramebuffer(g.fboCol);
+      if(g.fboHgt) gl.deleteFramebuffer(g.fboHgt);
+      g.texCol=tex(gl,PW,PH,gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT,gl.LINEAR);
+      g.texHgt=tex(gl,PW,PH,gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT,gl.LINEAR);
+      g.fboCol=fbo(gl,g.texCol);
+      g.fboHgt=fbo(gl,g.texHgt);
+      gpuClear();
+    }
+    function gpuClear(){
+      var g=G, gl=g.gl, c=GROUNDS[v.ground]||GROUNDS.linen;
+      gl.bindFramebuffer(gl.FRAMEBUFFER,g.fboCol);
+      gl.viewport(0,0,PW,PH);
+      gl.clearColor(c[0]/255,c[1]/255,c[2]/255,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,g.fboHgt);
+      gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    }
+
+    function dab(x,y,r,cr,cg,cb,a,h){
+      if(dabN>=DABMAX) return;
+      var o=dabN*8;
+      DABS[o]=x; DABS[o+1]=y; DABS[o+2]=r;
+      DABS[o+3]=cr; DABS[o+4]=cg; DABS[o+5]=cb;
+      DABS[o+6]=a; DABS[o+7]=h;
+      dabN++;
+    }
+    /* the same stroke as above, in paint pixels instead of grid pixels */
+    function gpuStroke(s,i0,sx,sy){
+      var x=(i0%gw)+0.5, y=((i0/gw)|0)+0.5;
+      sampleCol(s,(i0%gw),(i0/gw)|0,sc);
+      var vary=(Math.random()-0.5)*12, warm=(Math.random()-0.5)*8;
+      var r0=(sc[0]+vary+warm)/255, g0=(sc[1]+vary)/255, b0=(sc[2]+vary-warm)/255;
+      if(r0<0)r0=0; if(r0>1)r0=1; if(g0<0)g0=0; if(g0>1)g0=1; if(b0<0)b0=0; if(b0>1)b0=1;
+      var nb=Math.max(1,Math.min(9,Math.round(v.bristles)));
+      var load=0.25+0.6*(v.load/100);
+      var hAdd=0.25+2.2*(v.load/100);
+      var rad=(1.05+(v.load/100)*0.85)*sx;
+      var steps=Math.max(2,Math.round((3+(v.length/100)*0.13*gw)*(0.65+Math.random()*0.7)));
+      var d0=dirAt(i0,x,y,0,0), dx=d0[0], dy=d0[1], ii, nd, m, k, b, off, sp=rad*1.55;
+      var tw=(Math.random()-0.5)*0.34, cw=Math.cos(tw), sw2=Math.sin(tw), tx=dx;
+      dx=dx*cw-dy*sw2; dy=tx*sw2+dy*cw;
+      var px=x-dx*steps*0.5, py=y-dy*steps*0.5;
+      for(k=0;k<steps;k++){
+        if(px<0||py<0||px>=gw||py>=gh) break;
+        ii=((py|0)*gw+(px|0));
+        nd=dirAt(ii,px,py,dx,dy);
+        dx=dx*0.55+nd[0]*0.45; dy=dy*0.55+nd[1]*0.45;
+        m=Math.sqrt(dx*dx+dy*dy)||1; dx/=m; dy/=m;
+        var cxp=px*sx, cyp=py*sy;
+        for(b=0;b<nb;b++){
+          off=(b-(nb-1)/2)*sp;
+          dab(cxp-dy*off, cyp+dx*off, rad,
+              r0+(b%3-1)*0.02, g0+((b+1)%3-1)*0.02, b0+((b+2)%3-1)*0.02, load, hAdd*0.5);
+        }
+        px+=dx*1.25; py+=dy*1.25;
+      }
+      painted++;
+    }
+
+    /* And a renderer string is not a promise either. The first second on the
+       GPU is timed, and if it is not comfortably faster than the frame budget
+       the whole path stands down for the session and the JavaScript painter
+       takes over — the picture is the same, only slower to build. Better a
+       camera that quietly falls back than one that is unusable on hardware
+       nobody predicted. */
+    function gpuJudge(ms){
+      if(gpuJudged) return;
+      gpuT.push(ms);
+      /* the first few frames are shader compilation and buffer allocation,
+         not painting, so they are thrown away rather than held against it */
+      if(gpuT.length<20) return;
+      gpuJudged=true;
+      var a=gpuT.slice(5).sort(function(x,y){ return x-y; });
+      if(a[7]>55){ gpuOn=false; toast('Painting on the processor — the graphics path was slower here'); }
+    }
+
+    function gpuFrame(){
+      var g=G, gl=g.gl, i, t0=now();
+      if(small.c.width!==gw || small.c.height!==gh) build();
+      if(!grabInto(small,gw,gh)) return;
+      gpuSize();
+      var s=small.x.getImageData(0,0,gw,gh).data;
+
+      gl.bindTexture(gl.TEXTURE_2D,g.texSrc);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,small.c);
+
+      /* how wrong is the canvas, coarsely — one readback of a couple of
+         kilobytes, which is all the CPU needs to aim the next strokes */
+      gl.bindFramebuffer(gl.FRAMEBUFFER,g.fboErr);
+      gl.viewport(0,0,EW,EH);
+      gl.disable(gl.BLEND);
+      gl.useProgram(g.pErr);
+      gl.bindVertexArray(g.vaoFull);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,g.texCol);
+      gl.uniform1i(gl.getUniformLocation(g.pErr,'uCol'),0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,g.texSrc);
+      gl.uniform1i(gl.getUniformLocation(g.pErr,'uSrc'),1);
+      gl.uniform2f(gl.getUniformLocation(g.pErr,'uJit'),1/EW,1/EH);
+      gl.drawArrays(gl.TRIANGLES,0,6);
+      gl.readPixels(0,0,EW,EH,gl.RGBA,gl.UNSIGNED_BYTE,errPix);
+
+      var sum=0, cell=EW*EH;
+      for(i=0;i<cell;i++) sum+=errPix[i*4];
+      /* the shader gives the mean of three channels in 0..1, the rest of
+         this camera counts their sum in 0..255 — one conversion, so the
+         thresholds and the settling test mean the same thing either way */
+      errNow=(sum/cell)*3;
+
+      tick++;
+      if(done){
+        if(errNow>restAt*1.12+2){ done=false; settled=0; errMark=0; flow(s); }
+      } else if((tick%30)===0){
+        if(errMark>0 && (errMark-errNow)/errMark < 0.015) settled++; else settled=0;
+        errMark=errNow;
+        if(settled>=2){ done=true; restAt=errNow; }
+      }
+
+      var laid=0;
+      dabN=0;
+      if(!done){
+        flow(s);
+        var sxr=PW/gw, syr=PH/gh;
+        var K=Math.round(14+(v.settle/100)*210);
+        var thr=Math.max(12, errNow*(0.95-(v.settle/100)*0.35));
+        var cx,cy,ci,e,gx2,gy2;
+        for(var k2=0;k2<K;k2++){
+          /* aim inside the worst cells rather than uniformly: the map is
+             coarse, so a random point within a chosen cell is still a
+             perfectly good place to put a brush */
+          cx=(Math.random()*EW)|0; cy=(Math.random()*EH)|0;
+          ci=((EH-1-cy)*EW+cx)*4;                    // readPixels is bottom-up
+          e=errPix[ci]*3;
+          if(e<thr) continue;
+          gx2=Math.min(gw-1,((cx+Math.random())*gw/EW)|0);
+          gy2=Math.min(gh-1,((cy+Math.random())*gh/EH)|0);
+          gpuStroke(s, gy2*gw+gx2, sxr, syr);
+          laid++;
+        }
+        wet=wet*0.9+laid*0.1;
+      }
+
+      if(dabN>0){
+        gl.bindBuffer(gl.ARRAY_BUFFER,g.inst);
+        gl.bufferData(gl.ARRAY_BUFFER,DABS.subarray(0,dabN*8),gl.DYNAMIC_DRAW);
+        gl.bindVertexArray(g.vaoDab);
+        gl.useProgram(g.pDab);
+        gl.uniform2f(gl.getUniformLocation(g.pDab,'uRes'),PW,PH);
+        gl.enable(gl.BLEND);
+        gl.viewport(0,0,PW,PH);
+        /* colour is laid over what is there; height is added to it. Two
+           passes because WebGL2 cannot blend two attachments differently. */
+        gl.bindFramebuffer(gl.FRAMEBUFFER,g.fboCol);
+        gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+        gl.uniform1i(gl.getUniformLocation(g.pDab,'uMode'),0);
+        gl.drawArraysInstanced(gl.TRIANGLES,0,6,dabN);
+        gl.bindFramebuffer(gl.FRAMEBUFFER,g.fboHgt);
+        gl.blendFunc(gl.ONE,gl.ONE);
+        gl.uniform1i(gl.getUniformLocation(g.pDab,'uMode'),1);
+        gl.drawArraysInstanced(gl.TRIANGLES,0,6,dabN);
+      }
+
+      /* light it, into the canvas itself */
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      gl.viewport(0,0,PW,PH);
+      gl.disable(gl.BLEND);
+      gl.useProgram(g.pLight);
+      gl.bindVertexArray(g.vaoFull);
+      var ang=v.light*Math.PI/180, lx=Math.cos(ang), ly=Math.sin(ang), lz=0.66;
+      var mm=Math.sqrt(lx*lx+ly*ly+lz*lz); lx/=mm; ly/=mm; lz/=mm;
+      var hx=lx, hy=ly, hz=lz+1; mm=Math.sqrt(hx*hx+hy*hy+hz*hz);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,g.texCol);
+      gl.uniform1i(gl.getUniformLocation(g.pLight,'uCol'),0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,g.texHgt);
+      gl.uniform1i(gl.getUniformLocation(g.pLight,'uHgt'),1);
+      gl.uniform2f(gl.getUniformLocation(g.pLight,'uTexel'),1/PW,1/PH);
+      gl.uniform3f(gl.getUniformLocation(g.pLight,'uLight'),lx,ly,lz);
+      gl.uniform3f(gl.getUniformLocation(g.pLight,'uHalf'),hx/mm,hy/mm,hz/mm);
+      gl.uniform1f(gl.getUniformLocation(g.pLight,'uRelief'),(0.35+(v.relief/100)*3.4)*PW/900);
+      gl.drawArrays(gl.TRIANGLES,0,6);
+      gl.bindVertexArray(null);
+
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+      ctx.imageSmoothingEnabled=true;
+      ctx.drawImage(gcan,0,0,stage.width,stage.height);
+      hSub.textContent = (done ? (commas(painted)+' strokes · finished — move to repaint')
+                               : (commas(painted)+' strokes · '+laid+' wet'))+
+                         ' · painted at '+PW+'×'+PH;
+      /* the finish() is what makes the timing mean anything: without it the
+         work is still queued and every frame looks instant */
+      if(!gpuJudged){ gl.finish(); gpuJudge(now()-t0); }
+    }
+
     reg({
       id:'impasto', name:'Impasto', line:'Paint with a thickness to it',
       note:'The paint here has height as well as colour, and the height is lit at the end — which is the whole difference between a picture of a painting and a smear filter. It paints by disagreement: every frame it compares the canvas against what the lens sees and lays the next strokes where they differ most, so holding the phone still lets the painting converge and finish itself, while moving sends the brush after whatever changed. Nothing is ever wiped; wet strokes go down over dry ones. Strokes run along the direction the picture changes least, worked out from the same structure tensor Tide uses. Colour mixes as pigment rather than as light, so overlaps muddy instead of averaging towards grey. Drag on the picture to rake the light across the surface; tap to scrape the canvas back to bare ground.',
@@ -7827,13 +8193,35 @@
         {t:'sld',k:'light',label:'Light',min:0,max:359},
         {t:'sld',k:'grain',label:'Grain',min:120,max:560,step:20,rebuild:true}
       ],
-      init:build, size:build,
+      init:function(){
+        /* the painting is the same either way — where it happens is not */
+        if(!gpuTried){ gpuGet(); }
+        gpuOn=!!G;
+        build();
+      },
+      size:build,
+      shoot:function(){
+        if(gpuOn && G && PW){
+          /* the paint lives at twice the screen, so the still is taken from
+             the canvas it was painted on rather than from the preview */
+          try {
+            var t=mk(PW,PH);
+            t.x.drawImage(gcan,0,0);
+            shellFlash();
+            shellSaveCanvas(t.c, fileName('impasto','png'), PW+'×'+PH+' painting saved');
+            return;
+          } catch(e){}
+        }
+        shutterFlash();
+        saveStillCanvas(sourceCanvas(), fileName('impasto','png'));
+      },
       touch:function(x,y,phase){
         if(phase==='down'){ clear(); return; }
         var a=Math.atan2(y-0.5,x-0.5)*180/Math.PI;              // drag rakes the light
         v.light=Math.round((a+360)%360);
       },
       frame:function(){
+        if(gpuOn && G){ gpuFrame(); return; }
         if(small.c.width!==gw || small.c.height!==gh) build();
         if(!grabInto(small,gw,gh)) return;
         var s=small.x.getImageData(0,0,gw,gh).data;
