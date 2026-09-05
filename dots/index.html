@@ -289,6 +289,22 @@
     transition:background .16s,border-color .16s,color .16s,box-shadow .16s;
   }
   .seg.wrap{grid-auto-flow:row;grid-template-columns:repeat(3,1fr);gap:2px}
+  #emojiPicks button{font-size:1.15rem;line-height:1}
+  #emojiPicks button[data-emoji=""]{font-size:.875rem}
+  #emoji{
+    width:100%;margin-top:8px;padding:9px 11px;border-radius:3px;
+    border:1px solid rgba(0,0,0,.3);background:rgba(6,9,9,.25);
+    color:var(--bone);font:inherit;font-size:.95rem;
+  }
+  #emoji::placeholder{color:var(--dim)}
+  .wide-button{
+    width:100%;margin-top:6px;padding:9px 11px;border-radius:3px;
+    border:1px solid var(--line);background:none;color:var(--bone);
+    font:inherit;font-size:.9rem;cursor:pointer;
+  }
+  .wide-button:hover{border-color:rgba(237,231,221,.34)}
+  .wide-button:focus-visible{outline:2px solid var(--bone);outline-offset:2px}
+  #emoji:focus-visible{outline:2px solid var(--bone);outline-offset:2px}
   .seg button[aria-pressed=true]{
     border-color:var(--line);background:linear-gradient(180deg,var(--metal-light),var(--metal));color:var(--bone);
     box-shadow:0 2px 6px rgba(0,0,0,.26),inset 0 1px rgba(255,255,255,.055);
@@ -401,6 +417,22 @@
     <div class="panes">
       <section class="pane on" id="panel-portrait" role="tabpanel" aria-labelledby="tab-portrait" data-pane="portrait">
         <div class="ctl">
+          <div class="head">
+            <label for="emoji">Rebuild as</label>
+            <output id="emojiVal" for="emoji">the subject</output>
+          </div>
+          <div class="seg wrap" id="emojiPicks">
+            <button type="button" data-emoji="" aria-pressed="true" title="The subject of the photograph">Subject</button>
+            <button type="button" data-emoji="&#10084;&#65039;" aria-pressed="false">&#10084;&#65039;</button>
+            <button type="button" data-emoji="&#128128;" aria-pressed="false">&#128128;</button>
+            <button type="button" data-emoji="&#11088;" aria-pressed="false">&#11088;</button>
+            <button type="button" data-emoji="&#127774;" aria-pressed="false">&#127774;</button>
+            <button type="button" data-emoji="&#128054;" aria-pressed="false">&#128054;</button>
+          </div>
+          <input type="text" id="emoji" maxlength="8" placeholder="or type an emoji, or a word" autocomplete="off" spellcheck="false">
+          <button type="button" class="wide-button" id="target">Use another picture&hellip;</button>
+        </div>
+        <div class="ctl">
           <div class="head"><label>Tap behaviour</label></div>
           <div class="seg" id="modeToggle">
             <button type="button" data-mode="portrait" aria-pressed="true">Aim portrait</button>
@@ -499,6 +531,7 @@
     count:220, countPref:220, dotR:16, dotPref:16, pack:1.0, lift:0.55, thread:0.45,
     cropSize:0.46, cropX:0.5, cropY:0.34,
     shape:'oval', punch:'circle', tone:'sepia', edge:'deckle', mode:'portrait',
+    emoji:'', plate:null,
     seed:1, guides:true, layout:null, name:'', subject:'',
     avg:null, avgR:-1
   };
@@ -876,7 +909,10 @@
   // past that the honest answer is fewer of them.
   function autoHoleSize(){
     var m = photoMetrics();
-    var w = state.cropSize*m.pw, h = Math.min(w*1.24, m.ph*0.98);
+    // A glyph is not cut from one corner of the photograph, it is cut from
+    // anywhere its colours turn up, so the whole frame is the supply.
+    var w = state.plate ? m.pw : state.cropSize*m.pw;
+    var h = state.plate ? m.ph : Math.min(w*1.24, m.ph*0.98);
     var spacing = Math.sqrt(w*h*0.55/state.countPref);
     state.dotR = clamp(Math.round(Math.min(state.dotPref, spacing/1.28)), 8, 40);
     var d = state.dotR*1.28;
@@ -893,9 +929,59 @@
   // this is what stops a big flat background from eating the supply and leaving
   // skin slots with nothing but sky to fill them.
   function colorDemand(M){
-    var slots = hexSlots(M).slots, demand = new Array(125).fill(0);
+    var slots = targetSlots(M).slots, demand = new Array(125).fill(0);
     for (var i=0;i<slots.length;i++) demand[colorBin(slots[i].r,slots[i].g,slots[i].b)]++;
-    return demand;
+
+    // What the photograph can actually be asked for. Presence is not enough —
+    // a bin holding three stray pixels off a blurred edge cannot supply two
+    // hundred punches, and a budget spent on one is a budget spent on nothing:
+    // the sampler exhausts its tries, gives up on the quota, and comes back
+    // with whatever the frame happens to hold most of. So give every colour a
+    // capacity, from how much of the frame it covers and how many holes fit in
+    // the frame at all.
+    var SAMPLES = 4000, have = new Array(125).fill(0), rand = rng(20250904);
+    for (var k=0;k<SAMPLES;k++){
+      var c = rgbAt(rand(), rand());
+      have[colorBin(c[0],c[1],c[2])]++;
+    }
+    var m = photoMetrics(), spacing = state.dotR*1.28;
+    var room = m.pw*m.ph*0.9/(spacing*spacing);
+    var cap = have.map(function(h){ return h/SAMPLES*room; });
+
+    function centre(b){ return [(b/25|0), (b/5|0)%5, b%5]; }
+    function nearestWithRoom(b){
+      var c0 = centre(b), best = -1, bd = 1e9;
+      for (var o=0;o<125;o++){
+        if (cap[o] < 0.5) continue;
+        var c1 = centre(o);
+        var dr=c1[0]-c0[0], dg=c1[1]-c0[1], db=c1[2]-c0[2];
+        var d2 = dr*dr + dg*dg + db*db;
+        if (d2 < bd){ bd = d2; best = o; }
+      }
+      return best;
+    }
+
+    // Serve the biggest demands first, so the colour the picture is mostly made
+    // of gets the closest match rather than whatever is left over. Each takes
+    // what the frame can spare and passes the rest to its nearest neighbour
+    // with room: a red heart asked of a photograph with no red in it comes back
+    // in the warmest thing the photograph has.
+    var order = [];
+    for (var b=0;b<125;b++) if (demand[b]) order.push(b);
+    order.sort(function(x,y){ return demand[y] - demand[x]; });
+
+    var want = new Array(125).fill(0);
+    order.forEach(function(b){
+      var need = demand[b], at = b, guard = 0;
+      while (need > 0.5 && guard++ < 20){
+        var take = Math.min(need, cap[at]);
+        if (take > 0){ want[at] += take; cap[at] -= take; need -= take; }
+        if (need <= 0.5) break;
+        at = nearestWithRoom(b);
+        if (at < 0) break;
+      }
+    });
+    return want.map(function(v){ return Math.round(v); });
   }
 
   function generatePoints(){
@@ -958,6 +1044,166 @@
       y: clamp(state.cropY*m.ph - h/2, 0, m.ph-h),
       w:w, h:h, m:m
     };
+  }
+
+  /* ---------- an emoji as the thing being rebuilt ---------- */
+
+  // A plate is whatever is being rebuilt: pixels, plus the box within them that
+  // actually matters. Trimming to the ink means the shape rather than the
+  // glyph's or the file's box decides the proportions.
+  function trimPlate(d, sw, sh){
+    var x0=sw, x1=-1, y0=sh, y1=-1;
+    for (var y=0;y<sh;y++){
+      for (var x=0;x<sw;x++){
+        if (d[(y*sw+x)*4+3] > 40){
+          if (x<x0) x0=x;
+          if (x>x1) x1=x;
+          if (y<y0) y0=y;
+          if (y>y1) y1=y;
+        }
+      }
+    }
+    if (x1 < x0) return null;
+    return { d:d, stride:sw, x0:x0, y0:y0, w:x1-x0+1, h:y1-y0+1 };
+  }
+
+  function emojiPlate(ch){
+    var N = 220;
+    var c = document.createElement('canvas');
+    c.width = c.height = N;
+    var g = c.getContext('2d');
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = Math.round(N*0.78) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",' +
+             '"Twemoji Mozilla","EmojiOne Color",sans-serif';
+    g.fillText(ch, N/2, N/2);
+    var pl = trimPlate(g.getImageData(0,0,N,N).data, N, N);
+    if (!pl) return null;                          // this font cannot draw it
+    pl.kind = 'glyph'; pl.name = ch;
+    return pl;
+  }
+
+  // The face finder reads the analysis buffer through state, so point it at the
+  // other picture for a moment rather than teaching it a second way in.
+  function faceBoxOf(d, w, h){
+    var sd = state.analysis, sw = state.aw, sh = state.ah;
+    state.analysis = d; state.aw = w; state.ah = h;
+    try { return faceBox(); } finally { state.analysis = sd; state.aw = sw; state.ah = sh; }
+  }
+
+  // A second photograph as the thing being rebuilt. If there is a face in it,
+  // rebuild that rather than the whole frame — a face is what you brought the
+  // picture for.
+  function imagePlate(img, name){
+    var W = 240, H = Math.max(2, Math.round(W*img.naturalHeight/img.naturalWidth));
+    if (H > W*2){ H = W*2; }
+    var c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    var g = c.getContext('2d');
+    g.drawImage(img, 0, 0, W, H);
+    var data = g.getImageData(0,0,W,H).data;
+    var pl = trimPlate(data, W, H) || { d:data, stride:W, x0:0, y0:0, w:W, h:H };
+
+    var box = faceBoxOf(data, W, H);
+    if (box){
+      var fw = box.x1-box.x0+1, fh = box.y1-box.y0+1;
+      var half = Math.max(fw*0.72, fh*0.58);
+      // Same rule as the photograph itself: too small to be the subject means a
+      // passer-by or a reflection, and the whole picture is the better target.
+      if (2*half < W*0.16) box = null;
+    }
+    if (box){
+      var cx = (box.x0+box.x1)/2, cy = (box.y0+box.y1)/2 - half*0.18;
+      var x0 = clamp(Math.round(cx-half), 0, W-2), y0 = clamp(Math.round(cy-half*1.24), 0, H-2);
+      pl = { d:data, stride:W,
+             x0:x0, y0:y0,
+             w:clamp(Math.round(half*2), 2, W-x0),
+             h:clamp(Math.round(half*2.48), 2, H-y0) };
+      pl.face = true;
+    }
+    pl.kind = 'image'; pl.name = name;
+    return pl;
+  }
+
+  // Colour of the plate at a point inside its trimmed box, laid over the paper
+  // so a half-transparent edge does not come back as a dark fringe.
+  function plateAt(pl, nu, nv){
+    var x = clamp(Math.round(pl.x0 + nu*(pl.w-1)), 0, pl.stride-1);
+    var y = Math.max(0, Math.round(pl.y0 + nv*(pl.h-1)));
+    var i = (y*pl.stride+x)*4, a = pl.d[i+3]/255;
+    if (a < 0.5) return null;
+    return [ (pl.d[i]*a   + 251*(1-a))/255,
+             (pl.d[i+1]*a + 248*(1-a))/255,
+             (pl.d[i+2]*a + 242*(1-a))/255 ];
+  }
+
+  function plateSlots(M){
+    var pl = state.plate;
+    if (!pl) return null;
+    var s = state.dotR*1.62*state.pack, rowH = s*0.866;
+    var aspect = pl.w/pl.h;
+
+    function build(rx){
+      var ry = rx/aspect, out = [];
+      var rows = Math.ceil((2*ry)/rowH)+2;
+      for (var r=0;r<rows;r++){
+        var y = -ry + r*rowH, off = (r%2)? s/2 : 0;
+        var cols = Math.ceil((2*rx)/s)+2;
+        for (var c=0;c<cols;c++){
+          var x = -rx + off + c*s;
+          if (x < -rx || x > rx || y < -ry || y > ry) continue;
+          var nu = (x+rx)/(2*rx), nv = (y+ry)/(2*ry);
+          var col = plateAt(pl, nu, nv);
+          if (!col) continue;                       // outside the glyph itself
+          out.push({x:x, y:y, nu:nu, nv:nv, col:col});
+        }
+      }
+      return out;
+    }
+
+    // How much of the box a glyph actually fills varies a lot — a heart is not a
+    // star — so grow the box until it holds the number of pieces asked for.
+    var rx = Math.sqrt(M*s*s*0.866*aspect)/2, slots = build(rx);
+    for (var k=0;k<14 && slots.length!==M;k++){
+      rx *= clamp(Math.sqrt(M/Math.max(1,slots.length)), 0.82, 1.22);
+      slots = build(rx);
+    }
+    var guard = 0;
+    while (slots.length < M && guard < 60){ guard++; rx *= 1.03; slots = build(rx); }
+    if (slots.length > M){
+      // drop from the rim inwards, so thinning never puts a hole in the middle
+      slots.sort(function(a,b){
+        var da = Math.abs(a.nu-0.5)+Math.abs(a.nv-0.5), db = Math.abs(b.nu-0.5)+Math.abs(b.nv-0.5);
+        return da - db;
+      });
+      slots = slots.slice(0,M);
+    }
+    var step = 1/Math.max(8, Math.round(2*rx/s));
+    slots.forEach(function(sl){
+      sl.r = sl.col[0]; sl.g = sl.col[1]; sl.b = sl.col[2];
+      sl.lum = 0.299*sl.r + 0.587*sl.g + 0.114*sl.b;
+      // What makes a glyph legible is its rim and the lines inside it, so treat
+      // a change of colour — or running off the edge — as the detail worth
+      // placing first.
+      var d = 0;
+      [[step,0],[-step,0],[0,step],[0,-step]].forEach(function(o){
+        var n = plateAt(pl, clamp(sl.nu+o[0],0,1), clamp(sl.nv+o[1],0,1));
+        if (!n){ d = Math.max(d, 1); return; }
+        d = Math.max(d, (Math.abs(n[0]-sl.r)+Math.abs(n[1]-sl.g)+Math.abs(n[2]-sl.b))/3*3);
+      });
+      sl.detail = Math.min(1, d);
+      sl.gu = -1; sl.gv = -1;
+    });
+    return { slots:slots, rx:rx, ry:rx/aspect };
+  }
+
+  // What the pieces are being arranged into: the face found in the photograph,
+  // or a glyph borrowed from the keyboard.
+  function targetSlots(M){
+    if (state.plate){
+      var e = plateSlots(M);
+      if (e) return e;
+    }
+    return hexSlots(M);
   }
 
   function hexSlots(M){
@@ -1046,6 +1292,7 @@
       var cd = colorDist(p,s);
       var ld = Math.abs(p.lum-s.lum);
       var dd = Math.abs(p.detail-s.detail);
+      if (s.gu < 0) return cd*0.58 + ld*0.30 + dd*0.12;   // a glyph is nowhere in the photo
       var sd = spatialDist(p,s);
       return cd*0.42 + ld*0.23 + dd*0.12 + sd*0.23;
     }
@@ -1060,7 +1307,10 @@
 
     slots.forEach(function(slot){
       var best = -1, bestScore = 1e9;
-      var lumWindow = 0.28;
+      // A photograph may hold nothing as dark or as bright as the glyph wants,
+      // and a brightness window would then throw away the closest colours it
+      // does have. Colour already carries most of the score, so let it lead.
+      var lumWindow = slot.gu < 0 ? 1 : 0.28;
       for (var i=0;i<pts.length;i++){
         if (used[i]) continue;
         var p = pts[i];
@@ -1237,7 +1487,7 @@
     discAverage();
     var total = state.auto.length + state.manual.length;
     if (!total) return null;
-    var grid = hexSlots(total);
+    var grid = targetSlots(total);
     var L = layout(grid.ry);
     return { L:L, pairs:buildPairs(L,grid) };
   }
@@ -1251,7 +1501,7 @@
 
     drawPaperAndPhoto(ctx,L);
 
-    if (state.guides && state.mode === 'portrait'){
+    if (state.guides && state.mode === 'portrait' && !state.plate){
       var cr = cropRect();
       ctx.save();
       ctx.setLineDash([7,8]); ctx.lineWidth = 2;
@@ -1690,7 +1940,13 @@
   };
   function saySubject(){
     var el = document.getElementById('found');
-    var msg = SUBJECT[state.subject];
+    var pl = state.plate;
+    var msg = pl
+      ? (pl.kind === 'glyph'
+          ? 'Rebuilding ' + pl.name + ' out of the photograph, wherever its colours can be found.'
+          : 'Rebuilding ' + (pl.face ? 'the face in ' : '') + pl.name +
+            ' out of the photograph, wherever its colours can be found.')
+      : SUBJECT[state.subject];
     el.textContent = msg || '';
     el.hidden = !msg;
   }
@@ -1760,6 +2016,73 @@
   seg('modeToggle','mode');
   seg('shapeToggle','shape');
   seg('punchToggle','punch');
+
+  // Choosing what to rebuild changes which colours the punching needs to go
+  // looking for, so the holes are cut again rather than just redrawn.
+  function retarget(){
+    var pl = state.plate;
+    document.getElementById('emojiVal').textContent =
+      !pl ? 'the subject' : (pl.kind === 'glyph' ? pl.name : (pl.face ? 'a face' : 'a picture'));
+    Array.prototype.forEach.call(
+      document.querySelectorAll('#emojiPicks button'),
+      function(b){
+        b.setAttribute('aria-pressed',
+          String(!!pl && pl.kind === 'glyph' ? b.dataset.emoji === pl.name : b.dataset.emoji === ''));
+      });
+    if (!state.toned) return;
+    saySubject();
+    generatePoints();
+    render();
+  }
+
+  function setEmoji(ch, fromField){
+    state.emoji = ch || '';
+    state.plate = state.emoji ? emojiPlate(state.emoji) : null;
+    if (state.emoji && !state.plate){
+      state.emoji = '';
+      retarget();
+      document.getElementById('emojiVal').textContent = 'not a glyph';
+      return;
+    }
+    if (!fromField) document.getElementById('emoji').value = state.emoji;
+    retarget();
+  }
+
+  document.getElementById('emojiPicks').addEventListener('click', function(e){
+    var b = e.target.closest('button');
+    if (b) setEmoji(b.dataset.emoji, false);
+  });
+  document.getElementById('emoji').addEventListener('input', function(){
+    setEmoji(this.value.trim(), true);
+  });
+
+  // A second picture as the thing being rebuilt: a friend's face, a logo, the
+  // same photograph again in miniature.
+  var targetInput = document.createElement('input');
+  targetInput.type = 'file'; targetInput.accept = 'image/*';
+  targetInput.style.display = 'none';
+  document.body.appendChild(targetInput);
+
+  document.getElementById('target').addEventListener('click', function(){ targetInput.click(); });
+  targetInput.addEventListener('change', function(){
+    var file = targetInput.files && targetInput.files[0];
+    if (!file) return;
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      state.emoji = '';
+      document.getElementById('emoji').value = '';
+      state.plate = imagePlate(img, slug(file.name) || 'a picture');
+      URL.revokeObjectURL(url);
+      retarget();
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+      alert('That file would not open as an image. Try a JPEG or PNG.');
+    };
+    img.src = url;
+    targetInput.value = '';
+  });
   seg('edgeToggle','edge');
   seg('toneToggle','tone', function(){ if (state.img) prepareSource(state.img); });
 
