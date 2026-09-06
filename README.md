@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 38 instruments. Swipe left or right (or use the
+The rack currently holds 39 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -59,6 +59,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Stain | Every colour, in one place |
 | Impasto | Paint with a thickness to it |
 | Wash | Pigment on wet paper |
+| Stitch | The present, punched out of the past |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -226,7 +227,29 @@ JavaScript it replaced — and it times its own first twenty frames, standing
 down for the session if it is not comfortably inside the frame budget. The
 picture is the same either way.
 
-The other 37 cameras each implement their own transform the same way —
+Stitch is a port of the punched-photograph studio in
+[jamescamera/dots](https://github.com/jamescamera/dots), where a photograph is
+cut into discs and stitched into a second picture. Live, the material is not
+only finite but older than the picture being made from it: a plate is taken —
+one frame, held — and every disc placed in the live picture was cut from
+somewhere in that older frame. Hold still and the plate agrees with the world,
+so the picture comes back clean. Move, and the past stops holding what the
+present is asking for; the colour that has run out is replaced by the nearest
+one the plate still has, and the picture goes wrong in a way that is a record
+of what changed.
+
+The supply arithmetic is the studio's: colour binned five ways a channel, a bin
+that cannot serve a demand passing it to the nearest bin that can. What matters
+is that capacity is measured in *discs*, not pixels — a punch takes the area
+under the die with it, so what a colour can supply is how many holes of that
+size fit inside it. Without that there is no scarcity and no camera: four
+hundred discs against four thousand loose pixels never runs out of anything.
+
+The studio's skin mask and face box were deliberately left behind. They are
+heuristics rather than a model, but the claim above — that nothing in here does
+face detection — is worth more than the crop they would have given.
+
+The other 38 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -258,7 +281,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 38 cameras. Stain looks like segmentation and isn't: your finger
+in any of the 39 cameras. Stain looks like segmentation and isn't: your finger
 does the choosing, and the camera only works out what "like that" means —
 the same colour, the same brightness, whatever is moving, or simply here. A
 tap is a perfectly good selection when the person tapping can see the picture,
