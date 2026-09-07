@@ -8903,6 +8903,281 @@
     });
   })();
 
+  /* ---------------- PAREIDOLIA — whatever was nearly there ----------------
+     From the replications archive Josie Kins put together: "pattern
+     recognition enhancement", the effect where the visual system starts
+     finding faces and figures in things that only nearly contain them.
+
+     Everyone assumes that needs a model. It does not, and the community's
+     own description says why: what is being enhanced is not recognition,
+     it is SYMMETRY. The visual system finds a near-mirror and reinforces
+     it, and a reinforced vertical mirror with two dark patches in it is a
+     face whether or not anything intended one.
+
+     So this camera looks for upright mirror lines. For every position it
+     asks how well the picture either side of that line agrees with itself,
+     measured against how much variation is there at all — otherwise a
+     blank wall scores perfectly and means nothing. The strongest lines in
+     each row are kept, and the picture around them is folded towards its
+     own reflection.
+
+     Nothing is added. Nothing is recognised. The frame is only made more
+     like the thing it was already nearly being, and the faces that come
+     out of that were, in a real sense, already in the room. Turn Suggestion
+     up and it will complete symmetries that were barely there; turn
+     Selectivity up and it will only touch a mirror that was almost perfect
+     to begin with.
+
+     Level axes find the other everyday symmetry: reflections in water, in
+     glass, in a table. */
+  (function(){
+    var small=mk(), out=mk(), img=null, gw=2, gh=2, N=0;
+    var lum=null, S=null, Sb=null, tmp=null, colS=null, axes=null, axN=0;
+    var v={ look:'upright', reach:62, suggest:62, fill:55, select:44, spread:38, marks:'none', grain:220 };
+
+    /* How far either side of a line to look. This has to be on the scale of
+       the thing whose symmetry is being judged: at a tenth of that it reads
+       two patches of the same cheek, finds them identical, and learns
+       nothing — the first version reached eleven pixels for eyes sitting
+       twenty-seven apart, and ninety-eight per cent of the field came back
+       exactly zero. */
+    function reachPx(){ return Math.max(3,Math.round(3+(v.reach/100)*0.15*gw)); }
+    function build(){
+      gw=Math.max(120,Math.min(420,Math.round(v.grain)));
+      gh=Math.max(100,Math.round(gw*(H/Math.max(1,W))));
+      N=gw*gh;
+      if(small.c.width!==gw||small.c.height!==gh){ small.c.width=gw; small.c.height=gh; }
+      if(out.c.width!==gw||out.c.height!==gh){ out.c.width=gw; out.c.height=gh; }
+      img=out.x.createImageData(gw,gh);
+      lum=new Float32Array(N); S=new Float32Array(N); Sb=new Float32Array(N); tmp=new Float32Array(N);
+      colS=new Float32Array(Math.max(gw,gh));
+      axes=new Int32Array(64*3);
+    }
+
+    /* How well does the picture agree with itself across this line, given
+       how much there is to disagree about? The denominator is the whole
+       trick: without it a blank wall is perfectly symmetric and drowns
+       everything that is symmetric AND interesting. */
+    function symmetry(horiz){
+      var R=reachPx();
+      var ds=[Math.max(1,R*0.22)|0, Math.max(2,R*0.45)|0, Math.max(3,R*0.72)|0, R];
+      var es=[-(R*0.6)|0, -(R*0.25)|0, 0, (R*0.25)|0, (R*0.6)|0];
+      var x,y,i,k,e,d,a,b,c0,diff,ener,n,ia,ib,ic;
+      for(y=0;y<gh;y++) for(x=0;x<gw;x++){
+        i=y*gw+x;
+        diff=0; ener=0; n=0;
+        c0=lum[i];
+        for(k=0;k<4;k++){
+          d=ds[k];
+          for(e=0;e<5;e++){
+            if(horiz){
+              a=clamp(y-d,0,gh-1); b=clamp(y+d,0,gh-1);
+              ia=clamp(x+es[e],0,gw-1);
+              ib=a*gw+ia; ic=b*gw+ia;
+            } else {
+              a=clamp(x-d,0,gw-1); b=clamp(x+d,0,gw-1);
+              ia=clamp(y+es[e],0,gh-1);
+              ib=ia*gw+a; ic=ia*gw+b;
+            }
+            diff+=Math.abs(lum[ib]-lum[ic]);
+            ener+=Math.abs(lum[ib]-c0)+Math.abs(lum[ic]-c0);
+            n++;
+          }
+        }
+        diff/=n; ener/=(n*2);
+        /* Two things have to be true for a mirror to be worth anything: the
+           sides must agree, and there must be something there to agree
+           about. A flat patch agrees with itself perfectly and says nothing.
+           Scoring agreement and then throwing away anything below an
+           energy cutoff turned out to be a cliff — it discarded strong
+           mirrors that happened to sit in quiet parts of the picture — so
+           energy weights the score instead of gating it. */
+        S[i]= clamp(1-diff/(ener*1.15+3),0,1) * clamp(ener/9,0,1);
+      }
+    }
+
+    /* Smear the score ALONG the axis being looked for, so a mirror line is
+       a line rather than a scatter of lucky pixels. Note which way that is:
+       an UPRIGHT mirror gathers its evidence down the rows, not across
+       them. Blurring across it — which is what this did first — spreads
+       each row's luck sideways into its neighbours, finds almost no lines,
+       and folds a single row of pixels where a face should have been. */
+    function smear(alongY){
+      /* Along the line, and on the scale of the object: a face proves its
+         mirror at the nose and mouth and NOT at the eyes, which is exactly
+         where the interesting asymmetry is. If the line cannot carry its
+         support up thirty rows to the eyes it can never complete one. The
+         first version smeared five rows and completed nothing. */
+      var r=Math.max(3,Math.round(3+(v.spread/100)*0.22*(alongY?gh:gw))), x,y,k,sum,inv=1/(r*2+1);
+      if(!alongY){
+        for(y=0;y<gh;y++){
+          sum=0;
+          for(k=-r;k<=r;k++) sum+=S[y*gw+clamp(k,0,gw-1)];
+          for(x=0;x<gw;x++){
+            Sb[y*gw+x]=sum*inv;
+            sum+=S[y*gw+clamp(x+r+1,0,gw-1)]-S[y*gw+clamp(x-r,0,gw-1)];
+          }
+        }
+      } else {
+        for(x=0;x<gw;x++){
+          sum=0;
+          for(k=-r;k<=r;k++) sum+=S[clamp(k,0,gh-1)*gw+x];
+          for(y=0;y<gh;y++){
+            Sb[y*gw+x]=sum*inv;
+            sum+=S[clamp(y+r+1,0,gh-1)*gw+x]-S[clamp(y-r,0,gh-1)*gw+x];
+          }
+        }
+      }
+    }
+
+    /* THE STRONGEST MIRROR LINES IN THE FRAME.
+
+       Found as lines, not as points. The first version tested every row on
+       its own and kept the local maxima, which meant a perfectly good
+       vertical mirror was folded on the scattered handful of rows where its
+       score happened to peak and left alone on the rest — four hundred
+       pixels touched out of eighty-six thousand, and a face whose missing
+       eye sat on one of the rows it skipped.
+
+       So the support is summed ALONG each candidate line first, the best
+       few lines in the frame are taken, and each is then applied down its
+       whole run, weighted row by row by how well the mirror holds there. */
+    function findLines(vertical){
+      var outer=vertical?gw:gh, inner=vertical?gh:gw, c,p,i,sum,mx=0;
+      for(c=0;c<outer;c++){
+        sum=0;
+        for(p=0;p<inner;p++){
+          i=vertical ? (p*gw+c) : (c*gw+p);
+          sum+=Sb[i];
+        }
+        colS[c]=sum/inner;
+        if(colS[c]>mx) mx=colS[c];
+      }
+      /* relative to the best line here, because the absolute figure depends
+         on how long the line is and what the picture happens to be */
+      var thr=Math.max(0.02, mx*(0.42+(v.select/100)*0.5));
+      var gap=Math.max(3,Math.round(reachPx()*0.8));
+      axN=0;
+      var last=-1e9;
+      for(c=1;c<outer-1;c++){
+        if(colS[c]<thr) continue;
+        if(colS[c]<colS[c-1] || colS[c]<colS[c+1]) continue;
+        if(c-last<gap) continue;
+        last=c;
+        if(axN<64){ axes[axN*3]=c; axes[axN*3+1]=Math.round(clamp(colS[c]/(mx||1),0,1)*1000); axN++; }
+      }
+      return mx;
+    }
+
+    /* and fold the picture towards its own reflection about each line, all
+       the way down it, by however well the mirror holds at each step */
+    function foldLines(d0, vertical, peak){
+      var R=reachPx(), amt=(v.suggest/100), fill=(v.fill/100)*0.85;
+      var a,c,s0,p,i,d,w,rowW,i1,i2,m,ch,q,inner=vertical?gh:gw;
+      for(a=0;a<axN;a++){
+        c=axes[a*3]; s0=axes[a*3+1]/1000;
+        for(p=0;p<inner;p++){
+          i=vertical ? (p*gw+c) : (c*gw+p);
+          rowW=Sb[i]/(peak||1);
+          if(rowW<0.3) continue;                 // the mirror does not hold here
+          if(rowW>1) rowW=1;
+          for(d=1;d<=R;d++){
+            q=d/R;
+            /* flat across the reach, easing off only at the very edge: a
+               face's centre line is boring and its eyes are at the edge */
+            w=amt*s0*rowW*(q<0.82 ? 1 : 1-(q-0.82)/0.18);
+            if(w<=0.004) continue;
+            if(vertical){
+              if(c-d<0||c+d>=gw) break;
+              i1=(p*gw+c-d)*4; i2=(p*gw+c+d)*4;
+            } else {
+              if(c-d<0||c+d>=gh) break;
+              i1=((c-d)*gw+p)*4; i2=((c+d)*gw+p)*4;
+            }
+            /* Not quite the average of the two sides. A plain mean erases
+               the eye that is there as fast as it draws the one that is
+               not, and what comes out is a smudge with a mirror line down
+               it. Faces are made of features DARKER than what surrounds
+               them — eyes, nostrils, a mouth — so the blend leans towards
+               the darker side, and the folding adds features instead of
+               cancelling them. Fill is how far it leans. */
+            for(ch=0;ch<3;ch++){
+              var va=d0[i1+ch], vb=d0[i2+ch];
+              m=(va+vb)*0.5;
+              m=m+((va<vb?va:vb)-m)*fill;
+              d0[i1+ch]=va+(m-va)*w;
+              d0[i2+ch]=vb+(m-vb)*w;
+            }
+          }
+        }
+      }
+    }
+
+    reg({
+      id:'pareidolia', name:'Pareidolia', line:'Whatever was nearly there',
+      note:'From the psychedelic replications archive, where this is catalogued as pattern recognition enhancement: the effect of starting to find faces and figures in things that only nearly contain them. Everybody assumes that needs a model; it does not, because what is being enhanced is not recognition but symmetry. This looks for upright mirror lines — for every position, how well the picture on either side agrees with itself, measured against how much variation is there at all, because otherwise a blank wall scores perfectly and means nothing. The strongest lines are kept and the picture around them is folded towards its own reflection. Nothing is added and nothing is recognised: the frame is only made more like the thing it was already nearly being. Suggestion is how hard it pushes, Selectivity is how nearly perfect a mirror has to be before it is touched at all. Level axes find the other everyday symmetry — reflections in water, in glass, on a table. Marks show where it found its lines; it can tell you there is a mirror there, it has no idea it is a face.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'look',label:'Mirrors',opts:[['upright','Upright'],['level','Level'],['both','Both']]},
+        {t:'seg',k:'marks',label:'Marks',opts:[['none','Off'],['faint','Show the lines']]},
+        {t:'sld',k:'reach',label:'Reach',min:0,max:100},
+        {t:'sld',k:'suggest',label:'Suggestion',min:0,max:100},
+        {t:'sld',k:'fill',label:'Fill',min:0,max:100},
+        {t:'sld',k:'select',label:'Selectivity',min:0,max:100},
+        {t:'sld',k:'spread',label:'Line length',min:0,max:100},
+        {t:'sld',k:'grain',label:'Grain',min:120,max:420,step:20,rebuild:true}
+      ],
+      init:build, size:build,
+      frame:function(){
+        if(small.c.width!==gw||small.c.height!==gh) build();
+        if(!grabInto(small,gw,gh)) return;
+        var s=small.x.getImageData(0,0,gw,gh).data, d=img.data, i, o;
+        for(i=0;i<N;i++){ o=i*4; lum[i]=0.2126*s[o]+0.7152*s[o+1]+0.0722*s[o+2]; }
+        d.set(s);
+
+        var found=0, best=0, a, pk;
+        if(v.look==='upright'||v.look==='both'){
+          symmetry(false); smear(true);          // upright: evidence gathered down the rows
+          pk=findLines(true); foldLines(d,true,pk);
+          found+=axN;
+          for(a=0;a<axN;a++) if(axes[a*3+1]>best) best=axes[a*3+1];
+          if(v.marks!=='none') mark(d,true);
+        }
+        if(v.look==='level'||v.look==='both'){
+          symmetry(true); smear(false);          // level: evidence across the columns
+          pk=findLines(false); foldLines(d,false,pk);
+          found+=axN;
+          for(a=0;a<axN;a++) if(axes[a*3+1]>best) best=axes[a*3+1];
+          if(v.marks!=='none') mark(d,false);
+        }
+
+        out.x.putImageData(img,0,0);
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+        ctx.imageSmoothingEnabled=true;
+        ctx.drawImage(out.c,0,0,stage.width,stage.height);
+        hSub.textContent = found ? (found+' mirror line'+(found===1?'':'s')+
+                                    ' · strongest '+Math.round(best/10)+'% agreement')
+                                 : 'nothing symmetrical enough';
+      }
+    });
+
+    /* a mark on the line itself, drawn into the picture so it survives the
+       shutter — it says where the symmetry is, and claims nothing else */
+    function mark(d0,vertical){
+      var a,c,p,i,ch,q,inner=vertical?gh:gw;
+      for(a=0;a<axN;a++){
+        c=axes[a*3];
+        for(p=0;p<inner;p++){
+          i=(vertical ? (p*gw+c) : (c*gw+p));
+          if(Sb[i]<0.12) continue;
+          i*=4;
+          for(ch=0;ch<3;ch++){ q=d0[i+ch]; d0[i+ch]=q+((ch===1?255:40)-q)*0.3; }
+        }
+      }
+    }
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its

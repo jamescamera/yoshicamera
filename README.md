@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 39 instruments. Swipe left or right (or use the
+The rack currently holds 40 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -60,6 +60,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Impasto | Paint with a thickness to it |
 | Wash | Pigment on wet paper |
 | Stitch | The present, punched out of the past |
+| Pareidolia | Whatever was nearly there |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -249,7 +250,28 @@ The studio's skin mask and face box were deliberately left behind. They are
 heuristics rather than a model, but the claim above — that nothing in here does
 face detection — is worth more than the crop they would have given.
 
-The other 38 cameras each implement their own transform the same way —
+Pareidolia comes from the psychedelic replications archive Josie Kins put
+together, where the effect is catalogued as *pattern recognition enhancement*:
+starting to find faces and figures in things that only nearly contain them.
+Everyone assumes that needs a model. It doesn't, because what is being enhanced
+is not recognition but **symmetry**. The camera scores every possible upright
+mirror line by how well the picture either side of it agrees — measured against
+how much variation is there at all, since a blank wall agrees with itself
+perfectly and means nothing — sums that support along each line, takes the
+strongest few in the frame, and folds the picture towards its own reflection
+about them.
+
+The fold leans towards the darker of the two sides, because a plain average
+erases the eye that is there as fast as it draws the one that isn't. Faces are
+made of features darker than their surroundings, so leaning that way adds
+features instead of cancelling them.
+
+Nothing is added and nothing is recognised. The frame is only made more like
+the thing it was already nearly being — which is why, on a test picture of a
+face with one eye painted out, the missing eye comes back and the cheek beside
+it does not move.
+
+The other 39 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
@@ -281,7 +303,7 @@ clip reports correctly everywhere it's opened.
 **Is there depth estimation or segmentation in here?**
 
 No. No depth pass, no segmentation, no face detection, no model of any kind,
-in any of the 39 cameras. Stain looks like segmentation and isn't: your finger
+in any of the 40 cameras. Stain looks like segmentation and isn't: your finger
 does the choosing, and the camera only works out what "like that" means —
 the same colour, the same brightness, whatever is moving, or simply here. A
 tap is a perfectly good selection when the person tapping can see the picture,
