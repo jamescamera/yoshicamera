@@ -311,19 +311,32 @@ block goes to glass and one frame inside it lights up, hanging in the ghost
 of every other moment — and the shutter then hands you that frame, flat,
 rather than a photograph of the box it came out of.
 
-How much that ghost is worth is not obvious arithmetic. Dividing the
-per-slice alpha by the slice count is the natural way to keep Density
-meaning the same thing at any count, and on its own it is wrong: it assumes
-every slice covers every pixel, when a block seen at an angle has its slices
-offset across the screen and most pixels are crossed by only a fraction of
-them. Normalising against all of them thinned the ghost about fourfold —
-measured at luminance 40 against a scene of 195, where the arithmetic said
-120. The correction is a measured constant rather than a derived one, and
-with it the default ghost sits at 105 against that same scene, with Density
-spanning 25 to 128. The ghost is also drawn at every other slice, each
-thickened to stand for the pair — it is a smooth accumulation, so nothing in
-it survives one slice to the next the way a lit face does, and halving the
-draws is invisible while handing back what showing the cut-away part cost. It arrives at the size the block kept it, which is
+How much a volume is worth is not obvious arithmetic, and getting it wrong
+is what kept this from looking like the thing it is a picture of. Every mode
+that reads as a volume rather than a surface — Glass, and the ghost Pick
+hangs its chosen moment inside — divides its per-slice alpha by the slice
+count, so Density means the same thing whether the block is built from
+sixteen frames or seventy. That division is the natural thing to do and on
+its own it is wrong: it assumes every slice covers every pixel, when a block
+seen at an angle has its slices offset across the screen and most pixels are
+crossed by only a fraction of them. It thinned the volume about fourfold —
+the ghost measured at luminance 40 against a scene of 195, where the
+arithmetic said 120 — so the block could only ever come out as an opaque
+brick or a wash with nothing legible inside it, and never the thing it is
+supposed to be: something you can see into. The correction is a measured
+constant rather than a derived one. With it the default ghost sits at 105
+against that same scene, with Density spanning 25 to 128.
+
+Glass gets a near face for the same reason. A volume with nothing sharp
+anywhere in it reads as fog rather than as something you are looking into,
+so its nearest slice is drawn from the feed like every other near face, but
+at an alpha you can see through: the present is legible and the trails
+behind it still come through, which is the whole point of the mode.
+
+The ghost is drawn at every other slice, each thickened to stand for the
+pair — it is a smooth accumulation, so nothing in it survives one slice to
+the next the way a lit face does, and halving the draws is invisible while
+handing back what showing the cut-away part cost. It arrives at the size the block kept it, which is
 smaller than a photograph and cannot honestly be anything else: the past is
 only as big as what was stored of it, and scaling it up afterwards would be
 inventing detail rather than recovering any. The stored frames are sized to

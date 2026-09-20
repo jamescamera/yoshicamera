@@ -9391,26 +9391,30 @@
        opaque the moment you ask for detail. The other three are read
        front-to-back and want the slider as given. */
     function alphaFor(d,n){
-      if(v.block==='glass') return Math.min(1,(0.25+2.2*d)/Math.max(1,n));
+      if(v.block==='glass') return perSlice(0.22,2.6,d,n);
       if(v.block==='pick')  return ghostFor(d,n);
       if(v.block==='cards') return 0.55+0.45*d;
       return 0.22+0.78*d;
     }
 
-    /* How much the slices you are NOT on are worth: the ghost the chosen
-       moment hangs inside, and the ghost of the part a cut has taken away.
-       Dividing by the slice count is the obvious way to keep Density
-       meaning the same thing at any count, and on its own it is wrong — it
-       assumes every slice covers every pixel, when a block seen at an angle
-       has its slices offset across the screen and most pixels are crossed
-       by only a fraction of them. Normalising against all of them thinned
-       the ghost about fourfold: measured at luminance 40 against a scene of
-       195, where the arithmetic said 120. GHOSTBITE is that correction, and
-       it is a measured number rather than a derived one. */
-    var GHOSTBITE=3.6;
-    function ghostFor(d,n){
-      return Math.min(1,GHOSTBITE*(0.10+1.15*d)/Math.max(1,n));
+    /* Every mode that reads as a volume rather than a surface — Glass, and
+       the ghost Pick hangs its chosen moment inside — divides its per-slice
+       alpha by the slice count, so Density means the same thing whether the
+       block is built from sixteen frames or seventy. That division is the
+       obvious thing to do and on its own it is wrong: it assumes every
+       slice covers every pixel, when a block seen at an angle has its
+       slices offset across the screen and most pixels are crossed by only a
+       fraction of them. It thinned the volume about fourfold — the ghost
+       measured at luminance 40 against a scene of 195, where the arithmetic
+       said 120 — which is why the block could only ever come out as an
+       opaque brick or a wash with nothing legible inside it, and never the
+       thing it is supposed to be: something you can see into. STACKBITE is
+       that correction, measured rather than derived. */
+    var STACKBITE=3.6;
+    function perSlice(lo,hi,d,n){
+      return Math.min(1,STACKBITE*(lo+hi*d)/Math.max(1,n));
     }
+    function ghostFor(d,n){ return perSlice(0.10,1.15,d,n); }
 
     /* the eight corners, taken from the two end quads so that they agree
        with the affine maps the slices were drawn with */
@@ -9455,7 +9459,7 @@
 
     reg({
       id:'loaf', name:'Loaf', line:'The last few seconds, as a solid',
-      note:'A film is a stack of pictures and nobody ever looks at the stack. This keeps the last few seconds instead of dropping them and draws what they add up to: a solid block with width, height and time as its third axis, standing in the room and turning. The face towards you is the present. The faces down its sides are not photographs \u2014 each is one row or one column of the frame, one per moment, laid edge to edge \u2014 so anything that moved leaves a streak running back through the block and anything that stood still leaves a straight grain. Slices is how many pictures the block is built from and Span is how far back the oldest of them was taken; between them they set how much time you are looking at. Sweep is where in that time you are: it runs a knife through the stack and takes away everything in front of it, so the exposed face is a frame from that many seconds ago and you can cycle right back through the block a moment at a time. Set Block to Pick and Sweep stops cutting and starts choosing instead \u2014 the whole block goes to glass and one frame inside it lights up, and the shutter hands you that frame rather than a picture of the box it came out of. It comes at the size the block kept it, which is smaller than a photograph and cannot honestly be anything else: the past is only as big as what was stored of it. Carve rubs out whatever did not change from one moment to the next, which empties the room out of the block and leaves only the things that moved, hanging in it \u2014 and a frame picked out of a carved block comes away as a cut-out of just what was moving at that instant. Cards spreads the same slices apart until you can see they were ever separate. Drag anywhere to turn it. Time set to Frozen stops it taking new slices without stopping anything else, so the block keeps the last few seconds it saw and you can walk right around a piece of time that has already happened.',
+      note:'A film is a stack of pictures and nobody ever looks at the stack. This keeps the last few seconds instead of dropping them and draws what they add up to: a solid block with width, height and time as its third axis, standing in the room and turning. The face towards you is the present. The faces down its sides are not photographs \u2014 each is one row or one column of the frame, one per moment, laid edge to edge \u2014 so anything that moved leaves a streak running back through the block and anything that stood still leaves a straight grain. Slices is how many pictures the block is built from and Span is how far back the oldest of them was taken; between them they set how much time you are looking at. Sweep is where in that time you are: it runs a knife through the stack and takes away everything in front of it, so the exposed face is a frame from that many seconds ago and you can cycle right back through the block a moment at a time. Set Block to Pick and Sweep stops cutting and starts choosing instead \u2014 the whole block goes to glass and one frame inside it lights up, and the shutter hands you that frame rather than a picture of the box it came out of. It comes at the size the block kept it, which is smaller than a photograph and cannot honestly be anything else: the past is only as big as what was stored of it. Carve rubs out whatever did not change from one moment to the next, which empties the room out of the block and leaves only the things that moved, hanging in it \u2014 and a frame picked out of a carved block comes away as a cut-out of just what was moving at that instant. Glass drops the whole block to something you can see into: the volume stays legible all the way back, and its near face is still drawn from the feed, so the present reads as a photograph with the trails showing through it rather than as a fog with nothing sharp in it anywhere. Cards spreads the same slices apart until you can see they were ever separate. Drag anywhere to turn it. Time set to Frozen stops it taking new slices without stopping anything else, so the block keeps the last few seconds it saw and you can walk right around a piece of time that has already happened.',
       v:v,
       ctrl:[
         {t:'seg',k:'block',label:'Block',opts:[['loaf','Loaf'],['glass','Glass'],['cards','Cards'],['pick','Pick']]},
@@ -9587,8 +9591,16 @@
         /* Pick shows you what the shutter is about to hand over, so its
            lit face comes from the stored frame like everything else — no
            live feed standing in for a moment that has already gone */
+        /* Glass used to be refused a near face, which is what kept it a
+           wash: a volume with nothing sharp anywhere in it reads as fog
+           rather than as something you are looking into. It gets one now,
+           drawn from the feed like every other near face but at an alpha
+           you can see through, so the present is legible AND the trails
+           behind it still come through — which is the whole point of the
+           mode and the thing the reference does that this did not. */
         var live = near===0 && !held && v.time!=='still' && v.carve<=0 &&
-                   v.block!=='glass' && !isPick && srcReady();
+                   !isPick && srcReady();
+        var faceA = (v.block==='glass') ? (0.40+0.40*(v.density/100)) : 1;
 
         G=vol.x;
         G.setTransform(1,0,0,1,0,0);
@@ -9605,7 +9617,7 @@
           z = HZ - (j/(n-1))*2*HZ;
           quadAt(z);
           G.globalAlpha = isGhost ? ghostG
-                        : ((j===near && v.block!=='glass') ? 1 : a);
+                        : (j===near ? faceA : a);
           setQuad();
           G.drawImage(ring[(head-j+cap*2)%cap].c,0,0);
           if(v.block==='cards') strokeQuad('rgba(196,216,255,.34)',0.8);
@@ -9623,7 +9635,7 @@
         var sharp=false;
         if(live){
           quadAt(HZ);
-          ctx.globalAlpha=1;
+          ctx.globalAlpha=faceA;
           sharp=drawLive();
           if(!sharp){ setQuad(); ctx.drawImage(ring[head].c,0,0); }
         }
