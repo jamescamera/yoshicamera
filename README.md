@@ -300,12 +300,27 @@ that genuinely are sharp — the front face, which is drawn straight from the
 live feed rather than from a stored copy of it, and the wireframe — are
 drawn onto the screen itself, after.
 
+Sweep is the one control that means the same thing in every mode: how far
+back through the block you are looking. It runs a knife through the stack
+and takes away everything in front of it, so the exposed face is a frame
+from that many seconds ago and you can cycle right back through the block a
+moment at a time. Set Block to **Pick** and it stops cutting and starts
+choosing — the whole block goes to glass and one frame inside it lights up —
+and the shutter then hands you that frame, flat, rather than a photograph of
+the box it came out of. It arrives at the size the block kept it, which is
+smaller than a photograph and cannot honestly be anything else: the past is
+only as big as what was stored of it, and scaling it up afterwards would be
+inventing detail rather than recovering any. The stored frames are sized to
+spend the whole memory budget for exactly this reason.
+
 Carve turns the block inside out: it rubs out whatever did not change from
 one moment to the next, which empties the room out of the solid and leaves
 only the things that moved, hanging in it as worms. What survives is not one
 slice of the still room but all of them stacked, so the per-slice
 transparency is solved for rather than set directly — otherwise the slider
-does nothing at all until its last few percent.
+does nothing at all until its last few percent. A frame picked out of a
+carved block comes away as a cut-out of just what was moving at that
+instant.
 
 The other 40 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing

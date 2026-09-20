@@ -9223,14 +9223,22 @@
       return Math.max(120000,Math.min(hi,Math.round(px*0.30)));
     }
 
+    /* what the last frame actually drew, so the shutter takes the frame
+       that was lit on screen rather than recomputing which one it meant */
+    var shownN=0, shownPick=0, shownAgo=0;
+
     var v={ block:'loaf', turn:'drift', edges:'wire', time:'run',
-            slices:48, span:34, density:74, carve:0, sweep:45, spin:24, stretch:52, size:50 };
+            slices:48, span:34, density:74, carve:0, sweep:0, spin:24, stretch:52, size:50 };
 
     /* one slice per stored moment, allocated once at whatever count the
        device can hold — the Slices slider then only decides how many of
        them are drawn, so moving it never empties the block */
     function build(){
-      var long = LOW_MEMORY?150:(SLOW_DEVICE?200:288);
+      /* the stored frames are the block's whole material: they are what
+         the sides are built from AND what the shutter hands over when one
+         is picked out, so they are as large as the same memory budget will
+         carry rather than the smallest that looked right */
+      var long = LOW_MEMORY?240:(SLOW_DEVICE?300:400);
       var sw=stage.width||2, sh=stage.height||2, ar=sw/sh, w, h;
       if(ar>=1){ w=long; h=Math.max(24,Math.round(long/ar)); }
       else     { h=long; w=Math.max(24,Math.round(long*ar)); }
@@ -9384,8 +9392,10 @@
        front-to-back and want the slider as given. */
     function alphaFor(d,n){
       if(v.block==='glass') return Math.min(1,(0.25+2.2*d)/Math.max(1,n));
+      /* Pick has to be fainter than Glass, because one slice inside it is
+         about to be drawn solid and has to read through the rest */
+      if(v.block==='pick')  return Math.min(1,(0.10+1.15*d)/Math.max(1,n));
       if(v.block==='cards') return 0.55+0.45*d;
-      if(v.block==='cut')   return 0.30+0.70*d;
       return 0.22+0.78*d;
     }
 
@@ -9432,24 +9442,45 @@
 
     reg({
       id:'loaf', name:'Loaf', line:'The last few seconds, as a solid',
-      note:'A film is a stack of pictures and nobody ever looks at the stack. This keeps the last few seconds instead of dropping them and draws what they add up to: a solid block with width, height and time as its third axis, standing in the room and turning. The face towards you is the present. The faces down its sides are not photographs — each is one row or one column of the frame, one per moment, laid edge to edge — so anything that moved leaves a streak running back through the block and anything that stood still leaves a straight grain. Slices is how many pictures the block is built from and Span is how far back the oldest of them was taken; between them they set how much time you are looking at. Carve rubs out whatever did not change from one moment to the next, which empties the room out of the block and leaves only the things that moved, hanging in it. Cut takes a knife through the stack at the Sweep position and removes everything in front of it, so the exposed face is a frame from that many moments ago. Cards spreads the same slices apart until you can see they were ever separate. Drag anywhere to turn it. Time set to Frozen stops it taking new slices without stopping anything else, so the block keeps the last few seconds it saw and you can walk right around a piece of time that has already happened.',
+      note:'A film is a stack of pictures and nobody ever looks at the stack. This keeps the last few seconds instead of dropping them and draws what they add up to: a solid block with width, height and time as its third axis, standing in the room and turning. The face towards you is the present. The faces down its sides are not photographs \u2014 each is one row or one column of the frame, one per moment, laid edge to edge \u2014 so anything that moved leaves a streak running back through the block and anything that stood still leaves a straight grain. Slices is how many pictures the block is built from and Span is how far back the oldest of them was taken; between them they set how much time you are looking at. Sweep is where in that time you are: it runs a knife through the stack and takes away everything in front of it, so the exposed face is a frame from that many seconds ago and you can cycle right back through the block a moment at a time. Set Block to Pick and Sweep stops cutting and starts choosing instead \u2014 the whole block goes to glass and one frame inside it lights up, and the shutter hands you that frame rather than a picture of the box it came out of. It comes at the size the block kept it, which is smaller than a photograph and cannot honestly be anything else: the past is only as big as what was stored of it. Carve rubs out whatever did not change from one moment to the next, which empties the room out of the block and leaves only the things that moved, hanging in it \u2014 and a frame picked out of a carved block comes away as a cut-out of just what was moving at that instant. Cards spreads the same slices apart until you can see they were ever separate. Drag anywhere to turn it. Time set to Frozen stops it taking new slices without stopping anything else, so the block keeps the last few seconds it saw and you can walk right around a piece of time that has already happened.',
       v:v,
       ctrl:[
-        {t:'seg',k:'block',label:'Block',opts:[['loaf','Loaf'],['glass','Glass'],['cards','Cards'],['cut','Cut']]},
+        {t:'seg',k:'block',label:'Block',opts:[['loaf','Loaf'],['glass','Glass'],['cards','Cards'],['pick','Pick']]},
         {t:'seg',k:'turn',label:'Turn',opts:[['drift','Drift'],['hold','Hold'],['tumble','Tumble']]},
         {t:'seg',k:'edges',label:'Edges',opts:[['wire','Wire'],['bold','Bold'],['none','Off']]},
         {t:'seg',k:'time',label:'Time',opts:[['run','Running'],['still','Frozen']]},
+        {t:'sld',k:'sweep',label:'Sweep',min:0,max:100},
         {t:'sld',k:'slices',label:'Slices',min:8,max:72},
         {t:'sld',k:'span',label:'Span',min:0,max:100},
         {t:'sld',k:'density',label:'Density',min:0,max:100},
         {t:'sld',k:'carve',label:'Carve',min:0,max:100},
-        {t:'sld',k:'sweep',label:'Sweep',min:0,max:100},
         {t:'sld',k:'stretch',label:'Stretch',min:0,max:100},
         {t:'sld',k:'spin',label:'Spin',min:0,max:100},
         {t:'sld',k:'size',label:'Size',min:0,max:100}
       ],
       init:function(){ build(); tPrev=now(); },
       size:build,
+      /* Picking a frame out of the block and then being handed a photograph
+         of the block would be a joke at the user's expense, so in Pick the
+         shutter saves the lit frame itself, flat and full-bleed, at the size
+         it was actually kept. That is smaller than a photograph and there is
+         no honest way around it: the past is only as big as what was stored
+         of it, and scaling it up afterwards would be inventing detail rather
+         than recovering any. Every other mode keeps the ordinary shutter. */
+      shoot:function(){
+        if(v.block!=='pick' || filled<2 || !shownN){
+          shutterFlash();
+          saveStillCanvas(sourceCanvas(), fileName(null,'png'));
+          return;
+        }
+        var slot=ring[(head-shownPick+cap*2)%cap];
+        var t=mk(SW,SH);
+        t.x.drawImage(slot.c,0,0);
+        shellFlash();
+        shellSaveCanvas(t.c, fileName('loaf-frame','png'),
+          'Frame '+(shownPick+1)+' of '+shownN+' · '+
+          (shownAgo>0.05?shownAgo.toFixed(1)+' s ago':'this moment')+' · '+SW+'×'+SH);
+      },
       touch:function(x,y,ph){
         if(ph==='down' || dragAt<0){ dragX=x; dragY=y; dragYaw=yaw; dragPitch=pitch; }
         dragAt=now();
@@ -9503,9 +9534,15 @@
         fit = fit>0 ? fit+(want-fit)*0.07 : want;
         SCL=fit; ox0=bw/2; oy0=bh/2;
 
-        var first=0, step=1;
-        if(v.block==='cut')   first=Math.floor((v.sweep/100)*(n-1));
-        if(v.block==='cards') step=Math.max(1,Math.round(n/16));
+        /* Sweep is the one control that means the same thing everywhere:
+           how far back through the block you are looking. In Pick it lights
+           that one moment and leaves the rest of the block ghosted around
+           it; in every other mode it takes a knife through the stack there
+           and removes everything in front, which is what the old separate
+           Cut mode was. At zero the block is whole. */
+        var pick=Math.round((v.sweep/100)*(n-1));
+        var first=(v.block==='pick') ? 0 : pick;
+        var step=(v.block==='cards') ? Math.max(1,Math.round(n/16)) : 1;
         var a=alphaFor(v.density/100,Math.ceil((n-first)/step));
         /* the slice centres sit on the depth axis, so after the rotation
            their camera depth is monotonic in age — which way round to paint
@@ -9519,8 +9556,11 @@
         var near = back ? lo : hi;
         /* and only the present can come from the feed rather than from a
            stored copy of itself */
-        var live = near===0 && !held && v.time!=='still' &&
-                   v.carve<=0 && v.block!=='glass' && srcReady();
+        /* Pick shows you what the shutter is about to hand over, so its
+           lit face comes from the stored frame like everything else — no
+           live feed standing in for a moment that has already gone */
+        var live = near===0 && !held && v.time!=='still' && v.carve<=0 &&
+                   v.block!=='glass' && v.block!=='pick' && srcReady();
 
         G=vol.x;
         G.setTransform(1,0,0,1,0,0);
@@ -9533,7 +9573,8 @@
           if(live && j===0) continue;                 // that one is drawn full size, below
           z = HZ - (j/(n-1))*2*HZ;
           quadAt(z);
-          G.globalAlpha = (j===near && v.block!=='glass') ? 1 : a;
+          G.globalAlpha = (v.block==='pick') ? (j===pick ? 1 : a)
+                        : ((j===near && v.block!=='glass') ? 1 : a);
           setQuad();
           G.drawImage(ring[(head-j+cap*2)%cap].c,0,0);
           if(v.block==='cards') strokeQuad('rgba(196,216,255,.34)',0.8);
@@ -9557,16 +9598,28 @@
         }
         ctx.setTransform(1,0,0,1,0,0);
         ctx.globalAlpha=1;
-        if(v.block==='cut' && first>0){
-          quadAt(HZ-(first/(n-1))*2*HZ);
-          strokeQuad('rgba(255,246,214,.85)',1.4);
+        /* the lit plate in Pick, the knife mark in everything else — the
+           same outline either way, because it is the same plane */
+        if(v.block==='pick' || first>0){
+          quadAt(HZ-((v.block==='pick'?pick:first)/(n-1))*2*HZ);
+          strokeQuad(v.block==='pick' ? 'rgba(255,238,170,.92)' : 'rgba(255,246,214,.85)',
+                     v.block==='pick' ? 1.8 : 1.4);
         }
         if(v.edges!=='none') wire();
 
         var span=(stamp[head]-stamp[(head-(n-1)+cap*2)%cap])/1000;
-        hSub.textContent = n+' slices · '+(span>0?span.toFixed(1):'0.0')+' s deep'+
-                           (v.time==='still'?' · frozen':(sharp?' · live face':''))+
-                           ' · drag to turn';
+        var ago=(stamp[head]-stamp[(head-pick+cap*2)%cap])/1000;
+        shownN=n; shownPick=pick; shownAgo=ago;
+        if(v.block==='pick'){
+          hSub.textContent='frame '+(pick+1)+' of '+n+' · '+
+                           (ago>0.05?ago.toFixed(1)+' s ago':'now')+' · '+
+                           SW+'×'+SH+' · the shutter takes it';
+        } else {
+          hSub.textContent = n+' slices · '+(span>0?span.toFixed(1):'0.0')+' s deep'+
+                             (first>0?' · cut at '+ago.toFixed(1)+' s':'')+
+                             (v.time==='still'?' · frozen':(sharp?' · live face':''))+
+                             ' · drag to turn';
+        }
       }
     });
   })();
