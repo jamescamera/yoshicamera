@@ -955,7 +955,7 @@
      available or hasn't been granted, so the effect isn't just silently
      absent there. */
   var motionCan=mk();
-  var MOTION_SIM={ ribbon:1, afterimage:1 };
+  var MOTION_SIM={ ribbon:1, afterimage:1, loaf:1 };
   var motion=(function(){
     var enabled=false, usingSensor=false, tx=0, ty=0, ox=0, oy=0, lastBeta=null, lastGamma=null;
     function onOrient(e){
@@ -9178,6 +9178,399 @@
     }
   })();
 
+  /* ---------------- LOAF — the last few seconds, as a solid ----------------
+     A film is a stack of pictures and nobody ever looks at the stack. Keep
+     the last few seconds instead of throwing them away and what you have is
+     a solid: width, height, and time as the third axis. This draws that
+     solid, standing in the room, and turns it.
+
+     The face towards you is the present. The faces down its sides are not
+     photographs at all — each one is a single row or column of the frame,
+     one per moment, laid edge to edge — so anything that moved leaves a
+     streak running back through the block and anything that stood still
+     leaves a straight grain. That is the whole of it: no slit, no shutter
+     trick, just every recent frame drawn where it belongs in depth.
+
+     The block is built by stacking the slices themselves rather than by
+     assembling its six faces separately. Each slice is a flat rectangle at
+     a fixed depth, so under projection it lands as a parallelogram — an
+     exactly affine map, which a 2D canvas can draw with setTransform and no
+     approximation anywhere. The side faces then come out for free: each
+     slice hides all but a thin strip of the one behind it, and those strips
+     stacked up ARE the row-per-moment picture. Sampled a little wide, which
+     is why more Slices sharpens the sides and not the front.
+
+     The corners are taken from the same affine maps rather than projected
+     on their own, so the wireframe is glued to the picture it is drawn
+     around and cannot drift off it by a pixel.
+     ------------------------------------------------------------------ */
+  (function(){
+    var SW=0, SH=0, cap=0, ring=[], stamp=null, head=-1, filled=0;
+    var work=mk(), vol=mk(), G=null, prev=null, key=null, key2=null, tick=0;
+    var yaw=-0.78, pitch=0.34, dragX=0, dragY=0, dragYaw=0, dragPitch=0, dragAt=-1e9;
+    var tPrev=0;
+    var A=[0,0], B=[0,0], C=[0,0];
+    var cyy=1, syy=0, cpp=1, spp=0, ox0=0, oy0=0, SCL=1, HY=1, HZ=1, fit=0;
+    var D=6.0;                                  /* where the eye sits, in box half-widths */
+    /* how many pixels the volume buffer may have. A fixed fraction of
+       whatever it is being drawn onto, so the one-off render at a loaded
+       file's full size gets sharper sides than the preview rather than the
+       same soft ones blown up — with a ceiling, because the slices being
+       stacked are only a couple of hundred pixels across and there is
+       nothing above it left to resolve. */
+    function volPx(px){
+      var hi=LOW_MEMORY?190000:(SLOW_DEVICE?330000:760000);
+      return Math.max(120000,Math.min(hi,Math.round(px*0.30)));
+    }
+
+    var v={ block:'loaf', turn:'drift', edges:'wire', time:'run',
+            slices:48, span:34, density:74, carve:0, sweep:45, spin:24, stretch:52, size:50 };
+
+    /* one slice per stored moment, allocated once at whatever count the
+       device can hold — the Slices slider then only decides how many of
+       them are drawn, so moving it never empties the block */
+    function build(){
+      var long = LOW_MEMORY?150:(SLOW_DEVICE?200:288);
+      var sw=stage.width||2, sh=stage.height||2, ar=sw/sh, w, h;
+      if(ar>=1){ w=long; h=Math.max(24,Math.round(long/ar)); }
+      else     { h=long; w=Math.max(24,Math.round(long*ar)); }
+      var budget = LOW_MEMORY?1200000:(SLOW_DEVICE?2600000:6000000);
+      var hard   = LOW_MEMORY?36:(SLOW_DEVICE?56:72);
+      var want   = Math.max(8, Math.min(hard, Math.floor(budget/(w*h))));
+      if(w===SW && h===SH && want===cap) return;
+      SW=w; SH=h; cap=want;
+      ring=[]; for(var i=0;i<cap;i++) ring.push(mk(SW,SH));
+      stamp=new Float64Array(cap);
+      head=-1; filled=0; prev=null; key=null; key2=null; fit=0;
+      work.c.width=SW; work.c.height=SH;
+    }
+
+    /* how many frames apart the stored moments are: the block always holds
+       the same number of pictures, so this is the only thing that decides
+       how far back the oldest of them was taken */
+    function stride(){ return 1+Math.round((v.span/100)*6); }
+
+    /* soften the motion key before it becomes transparency — an unfiltered
+       per-pixel difference is mostly sensor noise, and carving with it
+       leaves the block full of glittering holes */
+    function soften(n){
+      var i,x,y,o;
+      if(!key2 || key2.length!==n) key2=new Uint8ClampedArray(n);
+      for(y=0;y<SH;y++){
+        o=y*SW;
+        for(x=0;x<SW;x++){
+          i=o+x;
+          key2[i]=(key[x>0?i-1:i]+key[i]*2+key[x<SW-1?i+1:i])>>2;
+        }
+      }
+      for(x=0;x<SW;x++){
+        for(y=0;y<SH;y++){
+          i=y*SW+x;
+          key[i]=(key2[y>0?i-SW:i]+key2[i]*2+key2[y<SH-1?i+SW:i])>>2;
+        }
+      }
+    }
+
+    function capture(){
+      /* a block cannot show time it has not seen yet, so while it is still
+         filling for the first time it takes every frame it is offered and
+         only settles into the chosen Span once it is full. Without this the
+         camera opens onto a nearly empty box for several seconds, and the
+         one-shot run-up before a full-size still never fills it at all. */
+      if(filled>=cap && (tick++ % stride())!==0) return filled>0;
+      if(!grabInto(work,SW,SH)) return filled>0;
+      head=(head+1)%cap;
+      var slot=ring[head], k=v.carve/100, n=SW*SH, i, o, dm, m;
+      if(k<=0.005){
+        /* nothing to key on, so skip the pixel pass entirely — 'copy' both
+           clears the slot and writes it in one go */
+        slot.x.globalCompositeOperation='copy';
+        slot.x.drawImage(work.c,0,0);
+        slot.x.globalCompositeOperation='source-over';
+        prev=null;
+      } else {
+        var px=work.x.getImageData(0,0,SW,SH), d=px.data;
+        if(!prev || prev.length!==d.length) prev=new Uint8ClampedArray(d);
+        if(!key || key.length!==n) key=new Uint8ClampedArray(n);
+        /* what is left of the still room is not one slice of it but all of
+           them, stacked. A flat 1-Carve per slice therefore looks like
+           nothing is happening until the very top of the slider, where
+           sixty-odd nearly-clear layers stop adding up to an opaque wall all
+           at once. Solve for the per-slice figure that lands the whole stack
+           on the asked-for opacity instead. */
+        var nE=Math.max(2,Math.min(v.slices|0,cap));
+        var base=255*(1-Math.pow(k,1/nE));
+        for(i=0;i<n;i++){
+          o=i*4;
+          dm=(Math.abs(d[o]-prev[o])+Math.abs(d[o+1]-prev[o+1])+Math.abs(d[o+2]-prev[o+2]))*0.3333;
+          m=(dm-5)/24; if(m<0) m=0; else if(m>1) m=1;
+          key[i]=(base+(255-base)*m)|0;
+        }
+        prev.set(d);
+        soften(n);
+        for(i=0;i<n;i++) d[i*4+3]=key[i];
+        slot.x.putImageData(px,0,0);
+      }
+      stamp[head]=now();
+      if(filled<cap) filled++;
+      return true;
+    }
+
+    /* The block changes its silhouette as it turns, so a constant chosen to
+       keep it inside the frame either clips it at one angle or wastes most
+       of the frame at every other. Measure instead: SCL only ever
+       multiplies the projection, so running the eight corners through it
+       once at unit scale gives exactly the number that fits. It is then
+       eased rather than applied outright, so a turning block settles into
+       the frame instead of pumping in and out of it. */
+    function fitScale(sw,sh){
+      var mx=1e-6, my=1e-6, i, x, y, z, X, Y, Z, k;
+      for(i=0;i<8;i++){
+        x=(i&1)?1:-1; y=(i&2)?HY:-HY; z=(i&4)?HZ:-HZ;
+        X=x*cyy+z*syy; Z=-x*syy+z*cyy;
+        Y=y*cpp-Z*spp; Z=y*spp+Z*cpp;
+        k=D/(D-Z);
+        if(Math.abs(X*k)>mx) mx=Math.abs(X*k);
+        if(Math.abs(Y*k)>my) my=Math.abs(Y*k);
+      }
+      return Math.min((sw/2)/mx,(sh/2)/my);
+    }
+
+    /* yaw about the upright axis, then pitch about the one across the
+       screen, then an ordinary perspective divide */
+    function proj(x,y,z,o){
+      var X=x*cyy+z*syy, Z=-x*syy+z*cyy;
+      var Y=y*cpp-Z*spp; Z=y*spp+Z*cpp;
+      var k=SCL*D/(D-Z);
+      o[0]=ox0+X*k; o[1]=oy0-Y*k;
+      return Z;
+    }
+    /* the three corners an affine map needs: the fourth follows from them,
+       which is exactly why the wireframe never parts company with the
+       picture it surrounds */
+    function quadAt(z){
+      proj(-1, HY, z, A);
+      proj( 1, HY, z, B);
+      proj(-1,-HY, z, C);
+    }
+    function setQuad(){
+      G.setTransform((B[0]-A[0])/SW,(B[1]-A[1])/SW,
+                     (C[0]-A[0])/SH,(C[1]-A[1])/SH, A[0], A[1]);
+    }
+
+    /* the present deserves better than a 200px copy of itself: when the
+       front of the block is the newest slice and nothing has been carved
+       out of it, draw that one face straight from the live feed at whatever
+       size the lens is actually handing over */
+    function drawLive(){
+      var el=srcEl(), vw=srcW(), vh=srcH();
+      if(!vw||!vh) return false;
+      var vr=vw/vh, cr=SW/SH, sx=0, sy=0, sw=vw, sh=vh;
+      if(vr>cr){ sw=vh*cr; sx=(vw-sw)/2; } else { sh=vw/cr; sy=(vh-sh)/2; }
+      /* the stored slices came through grabInto, which has already mirrored
+         the front lens; the raw element has not, so flip the x basis and
+         start from the other top corner instead of mirroring twice */
+      var o=A, ex0=B[0]-A[0], ex1=B[1]-A[1];
+      if(srcMirror()){ o=B; ex0=-ex0; ex1=-ex1; }
+      G.setTransform(ex0/SW, ex1/SW, (C[0]-A[0])/SH, (C[1]-A[1])/SH, o[0], o[1]);
+      G.drawImage(el, sx,sy,sw,sh, 0,0,SW,SH);
+      return true;
+    }
+
+    /* Glass is the one mode where every slice contributes, so its per-slice
+       alpha has to be divided by how many there are — otherwise Density
+       means something different at 16 slices than at 96 and the block turns
+       opaque the moment you ask for detail. The other three are read
+       front-to-back and want the slider as given. */
+    function alphaFor(d,n){
+      if(v.block==='glass') return Math.min(1,(0.25+2.2*d)/Math.max(1,n));
+      if(v.block==='cards') return 0.55+0.45*d;
+      if(v.block==='cut')   return 0.30+0.70*d;
+      return 0.22+0.78*d;
+    }
+
+    /* the eight corners, taken from the two end quads so that they agree
+       with the affine maps the slices were drawn with */
+    var box=[[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]];
+    function corners(z,at){
+      quadAt(z);
+      box[at][0]=A[0];                   box[at][1]=A[1];
+      box[at+1][0]=B[0];                 box[at+1][1]=B[1];
+      box[at+2][0]=B[0]+C[0]-A[0];       box[at+2][1]=B[1]+C[1]-A[1];
+      box[at+3][0]=C[0];                 box[at+3][1]=C[1];
+    }
+    var EDGES=[0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7];
+    function wire(){
+      corners( HZ,0);
+      corners(-HZ,4);
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.lineJoin='round';
+      ctx.strokeStyle=v.edges==='bold' ? 'rgba(206,222,255,.72)' : 'rgba(186,204,238,.34)';
+      ctx.lineWidth=Math.max(1,(v.edges==='bold'?1.6:0.9)*DPR);
+      ctx.beginPath();
+      for(var e=0;e<EDGES.length;e+=2){
+        ctx.moveTo(box[EDGES[e]][0],  box[EDGES[e]][1]);
+        ctx.lineTo(box[EDGES[e+1]][0],box[EDGES[e+1]][1]);
+      }
+      ctx.stroke();
+    }
+    /* the outline of whichever quad was projected last: the knife mark on a
+       cut face, so it reads as a cut rather than as the block simply having
+       been short all along, and the lit edge of every card, without which a
+       stack of opaque plates is indistinguishable from the solid block it
+       was cut from */
+    function strokeQuad(style,w){
+      G.setTransform(1,0,0,1,0,0);
+      G.globalAlpha=1;
+      G.strokeStyle=style;
+      G.lineWidth=Math.max(1,w*DPR);
+      G.beginPath();
+      G.moveTo(A[0],A[1]); G.lineTo(B[0],B[1]);
+      G.lineTo(B[0]+C[0]-A[0],B[1]+C[1]-A[1]); G.lineTo(C[0],C[1]);
+      G.closePath(); G.stroke();
+    }
+
+    reg({
+      id:'loaf', name:'Loaf', line:'The last few seconds, as a solid',
+      note:'A film is a stack of pictures and nobody ever looks at the stack. This keeps the last few seconds instead of dropping them and draws what they add up to: a solid block with width, height and time as its third axis, standing in the room and turning. The face towards you is the present. The faces down its sides are not photographs — each is one row or one column of the frame, one per moment, laid edge to edge — so anything that moved leaves a streak running back through the block and anything that stood still leaves a straight grain. Slices is how many pictures the block is built from and Span is how far back the oldest of them was taken; between them they set how much time you are looking at. Carve rubs out whatever did not change from one moment to the next, which empties the room out of the block and leaves only the things that moved, hanging in it. Cut takes a knife through the stack at the Sweep position and removes everything in front of it, so the exposed face is a frame from that many moments ago. Cards spreads the same slices apart until you can see they were ever separate. Drag anywhere to turn it. Time set to Frozen stops it taking new slices without stopping anything else, so the block keeps the last few seconds it saw and you can walk right around a piece of time that has already happened.',
+      v:v,
+      ctrl:[
+        {t:'seg',k:'block',label:'Block',opts:[['loaf','Loaf'],['glass','Glass'],['cards','Cards'],['cut','Cut']]},
+        {t:'seg',k:'turn',label:'Turn',opts:[['drift','Drift'],['hold','Hold'],['tumble','Tumble']]},
+        {t:'seg',k:'edges',label:'Edges',opts:[['wire','Wire'],['bold','Bold'],['none','Off']]},
+        {t:'seg',k:'time',label:'Time',opts:[['run','Running'],['still','Frozen']]},
+        {t:'sld',k:'slices',label:'Slices',min:8,max:72},
+        {t:'sld',k:'span',label:'Span',min:0,max:100},
+        {t:'sld',k:'density',label:'Density',min:0,max:100},
+        {t:'sld',k:'carve',label:'Carve',min:0,max:100},
+        {t:'sld',k:'sweep',label:'Sweep',min:0,max:100},
+        {t:'sld',k:'stretch',label:'Stretch',min:0,max:100},
+        {t:'sld',k:'spin',label:'Spin',min:0,max:100},
+        {t:'sld',k:'size',label:'Size',min:0,max:100}
+      ],
+      init:function(){ build(); tPrev=now(); },
+      size:build,
+      touch:function(x,y,ph){
+        if(ph==='down' || dragAt<0){ dragX=x; dragY=y; dragYaw=yaw; dragPitch=pitch; }
+        dragAt=now();
+        if(ph==='down') return;
+        yaw   = dragYaw   + (x-dragX)*3.6;
+        pitch = clamp(dragPitch + (y-dragY)*3.6, -1.18, 1.18);
+      },
+      frame:function(){
+        /* Frozen is not the app's own Hold, which stops the whole picture:
+           it stops only the taking of new slices, so the block keeps the
+           last few seconds it saw and you can go on turning it. */
+        if(!held && v.time!=='still') capture();
+        if(filled<2) return;
+
+        var SWs=stage.width, SHs=stage.height, t=now();
+        var dt=Math.min(0.08,(t-tPrev)/1000); tPrev=t;
+        /* a drag suspends the automatic turn; there is no pointer-up in the
+           camera API, so it resumes a moment after the moves stop arriving */
+        if(t-dragAt>280){
+          var rate=v.spin/100;
+          if(v.turn==='drift'){
+            yaw+=dt*(0.05+rate*0.62);
+            pitch+=dt*Math.sin(t*0.00037)*(0.06+rate*0.22);
+            pitch=clamp(pitch,-1.18,1.18);
+          } else if(v.turn==='tumble'){
+            yaw+=dt*(0.16+rate*1.5);
+            pitch=Math.sin(t*0.00031)*(0.25+rate*0.85);
+          }
+        }
+        cyy=Math.cos(yaw); syy=Math.sin(yaw);
+        cpp=Math.cos(pitch); spp=Math.sin(pitch);
+
+        var n=Math.max(2,Math.min(v.slices|0, filled));
+        HY=SHs/Math.max(1,SWs);
+        HZ=0.22+1.25*(v.stretch/100);
+
+        /* Every slice is a quad the size of the whole block, so painting
+           sixty of them at screen resolution means filling the screen sixty
+           times over — measured at four frames a second on a machine that
+           runs the other cameras at fifty. The volume is therefore built in
+           a buffer well under screen size and drawn up afterwards, which
+           costs nothing that was ever there: the slices are themselves only
+           a couple of hundred pixels across, so the buffer still magnifies
+           them. What genuinely is sharp — the live face and the wireframe —
+           is drawn onto the screen itself, after. */
+        var q=Math.min(1,Math.sqrt(volPx(SWs*SHs)/Math.max(1,SWs*SHs)));
+        var bw=Math.max(2,Math.round(SWs*q)), bh=Math.max(2,Math.round(SHs*q));
+        if(vol.c.width!==bw || vol.c.height!==bh){ vol.c.width=bw; vol.c.height=bh; }
+
+        var want=fitScale(bw,bh)*(0.45+(v.size/100)*0.75);
+        fit = fit>0 ? fit+(want-fit)*0.07 : want;
+        SCL=fit; ox0=bw/2; oy0=bh/2;
+
+        var first=0, step=1;
+        if(v.block==='cut')   first=Math.floor((v.sweep/100)*(n-1));
+        if(v.block==='cards') step=Math.max(1,Math.round(n/16));
+        var a=alphaFor(v.density/100,Math.ceil((n-first)/step));
+        /* the slice centres sit on the depth axis, so after the rotation
+           their camera depth is monotonic in age — which way round to paint
+           them is one sign test rather than a sort */
+        var back=(cyy*cpp)>0, lo=first, hi=n-1, j, z;
+        /* whichever slice ends up nearest is the block's face, and it is the
+           one that gets to be solid — otherwise the whole block turns from
+           solid to see-through as it passes square, which it has no reason
+           to do. Front-on that face is the present; from behind it is the
+           oldest moment the block still holds. */
+        var near = back ? lo : hi;
+        /* and only the present can come from the feed rather than from a
+           stored copy of itself */
+        var live = near===0 && !held && v.time!=='still' &&
+                   v.carve<=0 && v.block!=='glass' && srcReady();
+
+        G=vol.x;
+        G.setTransform(1,0,0,1,0,0);
+        G.globalAlpha=1; G.globalCompositeOperation='source-over';
+        G.imageSmoothingEnabled=true;
+        G.fillStyle='#05060b'; G.fillRect(0,0,bw,bh);
+        for(var sI=0;sI<=hi-lo;sI++){
+          j = back ? (hi-sI) : (lo+sI);
+          if(((j-lo)%step)!==0) continue;
+          if(live && j===0) continue;                 // that one is drawn full size, below
+          z = HZ - (j/(n-1))*2*HZ;
+          quadAt(z);
+          G.globalAlpha = (j===near && v.block!=='glass') ? 1 : a;
+          setQuad();
+          G.drawImage(ring[(head-j+cap*2)%cap].c,0,0);
+          if(v.block==='cards') strokeQuad('rgba(196,216,255,.34)',0.8);
+        }
+
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+        ctx.imageSmoothingEnabled=true;
+        ctx.drawImage(vol.c,0,0,bw,bh,0,0,SWs,SHs);
+
+        /* same pose, same projection, screen scale — SCL only ever
+           multiplies the result, so one factor moves the whole thing up */
+        G=ctx;
+        SCL=fit*((SWs/bw)+(SHs/bh))*0.5; ox0=SWs/2; oy0=SHs/2;
+        var sharp=false;
+        if(live){
+          quadAt(HZ);
+          ctx.globalAlpha=1;
+          sharp=drawLive();
+          if(!sharp){ setQuad(); ctx.drawImage(ring[head].c,0,0); }
+        }
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1;
+        if(v.block==='cut' && first>0){
+          quadAt(HZ-(first/(n-1))*2*HZ);
+          strokeQuad('rgba(255,246,214,.85)',1.4);
+        }
+        if(v.edges!=='none') wire();
+
+        var span=(stamp[head]-stamp[(head-(n-1)+cap*2)%cap])/1000;
+        hSub.textContent = n+' slices · '+(span>0?span.toFixed(1):'0.0')+' s deep'+
+                           (v.time==='still'?' · frozen':(sharp?' · live face':''))+
+                           ' · drag to turn';
+      }
+    });
+  })();
+
   /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
      Not a real feature yet — a quick test of runChain() (further down) to
      see whether feeding one camera's own output into a second one as its
@@ -9257,7 +9650,8 @@
     newsprint:['58,44,34','#F2ECD9'], lyrics:['138,118,255','#090813'], ascii:['123,255,166','#08100A'], emoji:['255,208,78','#0A0B10'], lifeform:['111,255,176','#06080D'], onebit:['238,236,229','#0B0B0D'],
     veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
     polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806'],
-    bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09'], tide:['120,196,255','#04122E'], passes:['120,255,190','#05070B']
+    bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09'], tide:['120,196,255','#04122E'], passes:['120,255,190','#05070B'],
+    loaf:['150,190,255','#05060B']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){
@@ -9312,7 +9706,7 @@
 
   /* these read the difference between frames, so a still starves them */
   var WANTS_MOTION={ shatter:1, halo:1, ribbon:1, afterimage:1, lifeform:1,
-                     trace:1, glass:1, veil:1, interference:1 };
+                     trace:1, glass:1, veil:1, interference:1, loaf:1 };
 
   function paintRack(){
     rackEl.innerHTML='';
@@ -11057,7 +11451,8 @@
      saving, and at twelve megapixels a frame is not cheap — so the run-up
      shortens as the picture grows. */
   var WARMUP={ infinite:26, ribbon:90, shatter:24, halo:18, afterimage:40,
-               lifeform:60, veil:20, fresco:18, glass:14, rain:22, litho:10, ink:6, colony:70 };
+               lifeform:60, veil:20, fresco:18, glass:14, rain:22, litho:10, ink:6, colony:70,
+               loaf:96 };
   function warmFrames(id){
     var want=WARMUP[id]||1;
     if(want<=1) return 1;

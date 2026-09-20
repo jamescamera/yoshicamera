@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 40 instruments. Swipe left or right (or use the
+The rack currently holds 41 instruments. Swipe left or right (or use the
 dots) to move between them; each gets its own controls in the setup sheet.
 
 | Camera | What it does |
@@ -61,6 +61,7 @@ dots) to move between them; each gets its own controls in the setup sheet.
 | Wash | Pigment on wet paper |
 | Stitch | The present, punched out of the past |
 | Pareidolia | Whatever was nearly there |
+| Loaf | The last few seconds, as a solid |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -271,7 +272,42 @@ the thing it was already nearly being — which is why, on a test picture of a
 face with one eye painted out, the missing eye comes back and the cheek beside
 it does not move.
 
-The other 39 cameras each implement their own transform the same way —
+Loaf stops throwing the last few seconds away and draws what they add up
+to: a solid with width, height and time as its third axis, standing in the
+room and turning. The face towards you is the present; the faces down its
+sides are one row or one column of the frame, one per moment, laid edge to
+edge, so whatever moved leaves a streak running back through the block and
+whatever stood still leaves a straight grain.
+
+It is built by stacking the frames themselves rather than by assembling its
+six faces separately, which is what keeps it a 2D-canvas camera at all. A
+slice is a flat rectangle at a fixed depth, so under projection it lands as
+a parallelogram — an exactly affine map, which `setTransform` draws with no
+approximation. The side faces then come out for free: each slice hides all
+but a thin strip of the one behind it, and those strips stacked up *are* the
+row-per-moment picture, sampled a little wide. That is why raising Slices
+sharpens the sides of the block and not its front. The eight corners the
+wireframe is drawn through are taken from the same affine maps rather than
+projected separately, so the box cannot drift off the picture inside it.
+
+Every slice is a quad the size of the whole block, so painting sixty of them
+at screen resolution means filling the screen sixty times over — four frames
+a second on a machine that runs the other cameras at fifty. The volume is
+therefore built in a buffer well under screen size and drawn up afterwards,
+which costs nothing that was ever there, because the slices being stacked
+are only a couple of hundred pixels across to begin with. The two things
+that genuinely are sharp — the front face, which is drawn straight from the
+live feed rather than from a stored copy of it, and the wireframe — are
+drawn onto the screen itself, after.
+
+Carve turns the block inside out: it rubs out whatever did not change from
+one moment to the next, which empties the room out of the solid and leaves
+only the things that moved, hanging in it as worms. What survives is not one
+slice of the still room but all of them stacked, so the per-slice
+transparency is solved for rather than set directly — otherwise the slider
+does nothing at all until its last few percent.
+
+The other 40 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 
