@@ -9392,11 +9392,24 @@
        front-to-back and want the slider as given. */
     function alphaFor(d,n){
       if(v.block==='glass') return Math.min(1,(0.25+2.2*d)/Math.max(1,n));
-      /* Pick has to be fainter than Glass, because one slice inside it is
-         about to be drawn solid and has to read through the rest */
-      if(v.block==='pick')  return Math.min(1,(0.10+1.15*d)/Math.max(1,n));
+      if(v.block==='pick')  return ghostFor(d,n);
       if(v.block==='cards') return 0.55+0.45*d;
       return 0.22+0.78*d;
+    }
+
+    /* How much the slices you are NOT on are worth: the ghost the chosen
+       moment hangs inside, and the ghost of the part a cut has taken away.
+       Dividing by the slice count is the obvious way to keep Density
+       meaning the same thing at any count, and on its own it is wrong — it
+       assumes every slice covers every pixel, when a block seen at an angle
+       has its slices offset across the screen and most pixels are crossed
+       by only a fraction of them. Normalising against all of them thinned
+       the ghost about fourfold: measured at luminance 40 against a scene of
+       195, where the arithmetic said 120. GHOSTBITE is that correction, and
+       it is a measured number rather than a derived one. */
+    var GHOSTBITE=3.6;
+    function ghostFor(d,n){
+      return Math.min(1,GHOSTBITE*(0.10+1.15*d)/Math.max(1,n));
     }
 
     /* the eight corners, taken from the two end quads so that they agree
@@ -9541,39 +9554,57 @@
            and removes everything in front, which is what the old separate
            Cut mode was. At zero the block is whole. */
         var pick=Math.round((v.sweep/100)*(n-1));
-        var first=(v.block==='pick') ? 0 : pick;
+        var isPick=(v.block==='pick');
         var step=(v.block==='cards') ? Math.max(1,Math.round(n/16)) : 1;
-        var a=alphaFor(v.density/100,Math.ceil((n-first)/step));
+        var a=alphaFor(v.density/100,Math.ceil(n/step));
+        /* A cut used to delete what it took off, which left the chosen
+           moment floating in an empty wireframe with no sense of how much
+           block had been in front of it. What a cut takes off is now still
+           drawn, just faintly, so the shape of what you are cutting through
+           stays visible as you wind back and forth. Fainter than Pick's
+           ghost, because here the ghost is context rather than the subject. */
+        var ghost=ghostFor(v.density/100,Math.ceil(n/step))*(isPick?1:0.42);
+        /* A ghost is a smooth accumulation — nothing in it survives one
+           slice to the next the way the lit face does — so it does not need
+           every slice to be drawn. Painting every other one and thickening
+           each to stand for the pair (the alpha that composites to the same
+           place twice over) is indistinguishable by eye and hands back what
+           drawing the cut-away part cost in the first place. */
+        var gstep=(n>=24)?2:1;
+        var ghostG=1-Math.pow(1-ghost,gstep);
         /* the slice centres sit on the depth axis, so after the rotation
            their camera depth is monotonic in age — which way round to paint
            them is one sign test rather than a sort */
-        var back=(cyy*cpp)>0, lo=first, hi=n-1, j, z;
+        var back=(cyy*cpp)>0, hi=n-1, j, z;
         /* whichever slice ends up nearest is the block's face, and it is the
            one that gets to be solid — otherwise the whole block turns from
            solid to see-through as it passes square, which it has no reason
-           to do. Front-on that face is the present; from behind it is the
-           oldest moment the block still holds. */
-        var near = back ? lo : hi;
+           to do. Front-on that face is the moment Sweep is sitting on; from
+           behind it is the oldest moment the block still holds. */
+        var near = back ? pick : hi;
         /* and only the present can come from the feed rather than from a
            stored copy of itself */
         /* Pick shows you what the shutter is about to hand over, so its
            lit face comes from the stored frame like everything else — no
            live feed standing in for a moment that has already gone */
         var live = near===0 && !held && v.time!=='still' && v.carve<=0 &&
-                   v.block!=='glass' && v.block!=='pick' && srcReady();
+                   v.block!=='glass' && !isPick && srcReady();
 
         G=vol.x;
         G.setTransform(1,0,0,1,0,0);
         G.globalAlpha=1; G.globalCompositeOperation='source-over';
         G.imageSmoothingEnabled=true;
         G.fillStyle='#05060b'; G.fillRect(0,0,bw,bh);
-        for(var sI=0;sI<=hi-lo;sI++){
-          j = back ? (hi-sI) : (lo+sI);
-          if(((j-lo)%step)!==0) continue;
+        var isGhost;
+        for(var sI=0;sI<n;sI++){
+          j = back ? (hi-sI) : sI;
+          isGhost = isPick ? (j!==pick) : (j<pick);   // cut away, or simply not the chosen one
+          if(isGhost){ if((j%gstep)!==0) continue; }
+          else if((j%step)!==0 && j!==pick && j!==near) continue;
           if(live && j===0) continue;                 // that one is drawn full size, below
           z = HZ - (j/(n-1))*2*HZ;
           quadAt(z);
-          G.globalAlpha = (v.block==='pick') ? (j===pick ? 1 : a)
+          G.globalAlpha = isGhost ? ghostG
                         : ((j===near && v.block!=='glass') ? 1 : a);
           setQuad();
           G.drawImage(ring[(head-j+cap*2)%cap].c,0,0);
@@ -9600,23 +9631,23 @@
         ctx.globalAlpha=1;
         /* the lit plate in Pick, the knife mark in everything else — the
            same outline either way, because it is the same plane */
-        if(v.block==='pick' || first>0){
-          quadAt(HZ-((v.block==='pick'?pick:first)/(n-1))*2*HZ);
-          strokeQuad(v.block==='pick' ? 'rgba(255,238,170,.92)' : 'rgba(255,246,214,.85)',
-                     v.block==='pick' ? 1.8 : 1.4);
+        if(isPick || pick>0){
+          quadAt(HZ-(pick/(n-1))*2*HZ);
+          strokeQuad(isPick ? 'rgba(255,238,170,.92)' : 'rgba(255,246,214,.85)',
+                     isPick ? 1.8 : 1.4);
         }
         if(v.edges!=='none') wire();
 
         var span=(stamp[head]-stamp[(head-(n-1)+cap*2)%cap])/1000;
         var ago=(stamp[head]-stamp[(head-pick+cap*2)%cap])/1000;
         shownN=n; shownPick=pick; shownAgo=ago;
-        if(v.block==='pick'){
+        if(isPick){
           hSub.textContent='frame '+(pick+1)+' of '+n+' · '+
                            (ago>0.05?ago.toFixed(1)+' s ago':'now')+' · '+
                            SW+'×'+SH+' · the shutter takes it';
         } else {
           hSub.textContent = n+' slices · '+(span>0?span.toFixed(1):'0.0')+' s deep'+
-                             (first>0?' · cut at '+ago.toFixed(1)+' s':'')+
+                             (pick>0?' · cut at '+ago.toFixed(1)+' s':'')+
                              (v.time==='still'?' · frozen':(sharp?' · live face':''))+
                              ' · drag to turn';
         }

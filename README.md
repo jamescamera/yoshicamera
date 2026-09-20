@@ -301,13 +301,29 @@ live feed rather than from a stored copy of it, and the wireframe — are
 drawn onto the screen itself, after.
 
 Sweep is the one control that means the same thing in every mode: how far
-back through the block you are looking. It runs a knife through the stack
-and takes away everything in front of it, so the exposed face is a frame
-from that many seconds ago and you can cycle right back through the block a
-moment at a time. Set Block to **Pick** and it stops cutting and starts
-choosing — the whole block goes to glass and one frame inside it lights up —
-and the shutter then hands you that frame, flat, rather than a photograph of
-the box it came out of. It arrives at the size the block kept it, which is
+back through the block you are looking. It runs a knife through the stack so
+the exposed face is a frame from that many seconds ago, and you can cycle
+right back through the block a moment at a time. What the knife takes off is
+not thrown away, only ghosted — otherwise the moment you are on floats in an
+empty wireframe with no sense of how much block used to be in front of it.
+Set Block to **Pick** and it stops cutting and starts choosing — the whole
+block goes to glass and one frame inside it lights up, hanging in the ghost
+of every other moment — and the shutter then hands you that frame, flat,
+rather than a photograph of the box it came out of.
+
+How much that ghost is worth is not obvious arithmetic. Dividing the
+per-slice alpha by the slice count is the natural way to keep Density
+meaning the same thing at any count, and on its own it is wrong: it assumes
+every slice covers every pixel, when a block seen at an angle has its slices
+offset across the screen and most pixels are crossed by only a fraction of
+them. Normalising against all of them thinned the ghost about fourfold —
+measured at luminance 40 against a scene of 195, where the arithmetic said
+120. The correction is a measured constant rather than a derived one, and
+with it the default ghost sits at 105 against that same scene, with Density
+spanning 25 to 128. The ghost is also drawn at every other slice, each
+thickened to stand for the pair — it is a smooth accumulation, so nothing in
+it survives one slice to the next the way a lit face does, and halving the
+draws is invisible while handing back what showing the cut-away part cost. It arrives at the size the block kept it, which is
 smaller than a photograph and cannot honestly be anything else: the past is
 only as big as what was stored of it, and scaling it up afterwards would be
 inventing detail rather than recovering any. The stored frames are sized to
