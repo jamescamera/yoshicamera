@@ -58,7 +58,8 @@
         border-radius:12px;background:var(--surface);}
   #hoursRead{font-size:12px;color:var(--ink-soft);margin:9px 0 0;}
   #hoursRead b{color:var(--ink);}
-  #verdict{font-size:12.5px;color:var(--ink-soft);margin:11px 0 0;padding:11px 13px;
+  .ctl{font-size:11.5px;color:var(--ink-mute);margin:8px 0 0;}
+  #verdict{font-size:13px;color:var(--ink-soft);margin:12px 0 0;padding:13px 14px;
            border:1px solid var(--rule);border-radius:10px;background:rgba(242,240,234,.035);}
   #verdict b{color:var(--ink);}
   #read{font-size:12px;color:var(--ink-soft);margin:9px 0 0;min-height:20px;}
@@ -88,11 +89,15 @@
 <body>
 
 <h1>Block</h1>
-<p class="sub">Ninety days of hourly prices, folded so the daily and weekly cycles
-become axes of a solid. Drag to turn it.</p>
+<p class="sub">Three months of hourly readings, folded so the daily and weekly
+cycles become axes of a solid. If the hour of the day matters you see banding;
+if it doesn’t you see confetti. Drag to turn it.</p>
 
 <div class="row" id="coins"></div>
+<p class="ctl">The last is a control — something with a daily cycle nobody doubts.
+Use it to see what a real one looks like here.</p>
 <p id="status">Loading…</p>
+<p id="verdict"></p>
 
 <div id="stageWrap">
   <canvas id="stage" width="900" height="560"></canvas>
@@ -126,41 +131,63 @@ become axes of a solid. Drag to turn it.</p>
   <span id="rampScale" style="margin-left:4px"></span>
 </div>
 
-<p class="lbl">All ninety days, by hour of day</p>
+<p class="lbl">Every reading, by hour of day</p>
 <canvas id="hours" width="900" height="132"></canvas>
-<p id="hoursRead">Each cell is every reading at that hour, averaged — ninety of them.
+<p id="hoursRead">Each cell is every reading at that hour, averaged.
 A ring marks an hour whose mean clears twice its own standard error.</p>
-<p id="verdict"></p>
 
 <div id="tableWrap"><table id="tbl"></table></div>
 
 <div class="note">
-  <p><b>What you are looking at.</b> Every hourly move of the last ninety days,
-  re-indexed so that <b>across</b> is the hour of the day (00–23 UTC),
+  <p><b>What you are looking at.</b> Every hourly reading of the last few
+  months, re-indexed so that <b>across</b> is the hour of the day (00–23 UTC),
   <b>down</b> is the day of the week, and <b>back</b> is the week. Nothing is
   averaged away — each cell is one specific hour of one specific day. If the
   hour of the day matters, it shows as vertical banding that holds all the way
   back through the block. If the day of the week matters, it shows as horizontal
-  banding. If neither does, it looks like noise, and that is the honest answer.</p>
+  banding. If neither does, it looks like confetti, and that is the honest
+  answer rather than a failure to find one.</p>
+  <p><b>Why there is a control.</b> A block of noise and a broken chart look
+  identical, so one of the subjects is air temperature, which has a daily cycle
+  nobody disputes. Switch to it and the banding is unmistakable and holds all
+  the way back; switch away and you can see for yourself that the coins have
+  nothing like it. Without something known to compare against, neither picture
+  means very much.</p>
   <p><b>The block is for spotting, not for reading.</b> A turning, translucent
   solid is a bad instrument for precise values — it occludes, it foreshortens,
   it blends. Cut to a week and read it off the flat panel, or open the table.</p>
-  <p><b>It is a way of looking, not a signal.</b> Nothing here is advice, and
-  ninety days of one asset is a small sample: testing twenty-four hours at once
-  means the strongest-looking hour will look strong by chance more often than
-  the numbers suggest.</p>
-  <p>Crypto rather than equities on purpose: it trades continuously, so the
-  grain is unbroken. A stock market's nights and weekends would cut the block
-  into stripes that say nothing about behaviour. Prices from
-  <a href="https://www.coingecko.com">CoinGecko</a>, free and without a key.</p>
+  <p><b>It is a way of looking, not a signal.</b> Nothing here is advice. A few
+  months of one subject is a small sample, and testing twenty-four hours at once
+  means the strongest-looking hour will look strong by chance more often than it
+  first appears — which is exactly why the line above counts how many hours
+  <em>chance alone</em> would have handed you.</p>
+  <p>Crypto rather than equities, for two reasons: it trades continuously, so
+  the grain is unbroken where a market's nights and weekends would cut the block
+  into stripes that say nothing about behaviour — and it is the only free
+  price source that a page with no server can fetch at all, since the equities
+  APIs either need a key or send no CORS header. Prices from
+  <a href="https://www.coingecko.com">CoinGecko</a>, temperature from
+  <a href="https://open-meteo.com">Open-Meteo</a>, both free and without a key.</p>
 </div>
 
 <script>
 (function(){
   "use strict";
   var HOURS=24, DAYS=7;
-  var COINS=[['bitcoin','Bitcoin'],['ethereum','Ethereum'],['solana','Solana'],['dogecoin','Dogecoin']];
+  var SOURCES=[
+    {id:'bitcoin', name:'Bitcoin',  kind:'coin', unit:'%'},
+    {id:'ethereum',name:'Ethereum', kind:'coin', unit:'%'},
+    {id:'solana',  name:'Solana',   kind:'coin', unit:'%'},
+    {id:'dogecoin',name:'Dogecoin', kind:'coin', unit:'%'},
+    /* the control: air temperature has a daily cycle nobody argues about, so
+       it shows what this page looks like when there IS something to find.
+       Without it a block of noise is indistinguishable from a broken chart. */
+    {id:'temp', name:'London air temp', kind:'temp', unit:'\u00B0C', control:true}
+  ];
+  function src(id){ for(var i=0;i<SOURCES.length;i++) if(SOURCES[i].id===id) return SOURCES[i];
+                    return SOURCES[0]; }
   var coin='bitcoin', cells=null, weeks=[], scale=1;
+  function unit(){ return src(coin).unit; }
   var meanCells=null, meanScale=1, meanN=null, mode='week';
   var hourStat=null, hourScale=1;
   var hours=document.getElementById('hours'), hx=hours.getContext('2d');
@@ -190,26 +217,36 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
   function load(id){
     coin=id; cells=null; paintCoins();
     statusEl.className=''; statusEl.textContent='Loading ninety days of '+id+'…';
-    var url='https://api.coingecko.com/api/v3/coins/'+id+
-            '/market_chart?vs_currency=usd&days=90';
+    var S=src(id), url, who;
+    if(S.kind==='temp'){
+      who='Open-Meteo';
+      url='https://api.open-meteo.com/v1/forecast?latitude=51.5&longitude=-0.12'+
+          '&hourly=temperature_2m&past_days=92&forecast_days=0';
+    } else {
+      who='CoinGecko';
+      url='https://api.coingecko.com/api/v3/coins/'+id+'/market_chart?vs_currency=usd&days=90';
+    }
     fetch(url).then(function(r){
       if(!r.ok) throw new Error('HTTP '+r.status);
       return r.json();
     }).then(function(j){
-      if(!j.prices || j.prices.length<48) throw new Error('not enough data');
-      build(j.prices);
-      statusEl.textContent = weeks.length+' weeks · '+j.prices.length+
-        ' hourly prices · '+fmtDate(weeks[weeks.length-1].t0)+' to '+fmtDate(weeks[0].t1);
+      var pts=(S.kind==='temp') ? fromTemp(j) : fromPrices(j);
+      if(pts.length<48) throw new Error('not enough data');
+      build(pts);
+      statusEl.textContent = weeks.length+' weeks · '+pts.length+' hourly readings · '+
+        fmtDate(weeks[weeks.length-1].t0)+' to '+fmtDate(weeks[0].t1)+
+        (S.kind==='temp' ? ' · deviation from each day\u2019s own mean'
+                         : ' · change over each hour');
       draw(); drawFlat(); drawHours();
     })['catch'](function(e){
       statusEl.className='err';
-      statusEl.textContent='Could not reach CoinGecko ('+e.message+
+      statusEl.textContent='Could not reach '+who+' ('+e.message+
         '). It is free and needs no key, but it does rate-limit — try again shortly.';
     });
   }
   function setRampLabel(){
     document.getElementById('rampScale').textContent =
-      '±'+(mode==='mean'?meanScale:scale).toFixed(2)+'% per hour'+
+      '\u00b1'+(mode==='mean'?meanScale:scale).toFixed(2)+unit()+
       (mode==='mean'?' (averaged)':'');
   }
   function gridNow(){
@@ -221,15 +258,40 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
     return d.toUTCString().slice(5,11);
   }
 
-  /* fold the series into [week][weekday][hour] */
-  function build(prices){
-    var pts=[], i;
-    for(i=1;i<prices.length;i++){
-      var prev=prices[i-1][1], cur=prices[i][1];
+  /* a price has a trend, so what matters is the move over each hour */
+  function fromPrices(j){
+    var out=[], i, P=j.prices||[];
+    for(i=1;i<P.length;i++){
+      var prev=P[i-1][1], cur=P[i][1];
       if(!prev) continue;
-      pts.push({t:prices[i][0], v:(cur-prev)/prev*100, p:cur});
+      out.push({t:P[i][0], v:(cur-prev)/prev*100});
     }
+    return out;
+  }
+  /* a temperature has a level, so what matters is how far this hour sits from
+     its own day — which removes the season and leaves the daily cycle alone */
+  function fromTemp(j){
+    var h=j.hourly||{}, T=h.time||[], V=h.temperature_2m||[], i;
+    var byDay={}, rows=[];
+    for(i=0;i<T.length;i++){
+      if(V[i]===null||V[i]===undefined) continue;
+      var ms=Date.parse(T[i]+'Z'), day=T[i].slice(0,10);
+      (byDay[day]=byDay[day]||[]).push(V[i]);
+      rows.push({t:ms, raw:V[i], day:day});
+    }
+    var mean={}, k;
+    for(k in byDay){ var a=byDay[k], sm=0, q;
+      for(q=0;q<a.length;q++) sm+=a[q];
+      mean[k]=sm/a.length; }
+    var out=[];
+    for(i=0;i<rows.length;i++) out.push({t:rows[i].t, v:rows[i].raw-mean[rows[i].day]});
+    return out;
+  }
+
+  /* fold the series into [week][weekday][hour] */
+  function build(pts){
     if(!pts.length) return;
+    var i;
     /* week 0 is the most recent; walk back in 7-day blocks from the last point,
        so the front of the block is always "now" rather than a calendar edge */
     var end=pts[pts.length-1].t, WEEK=7*24*3600*1000;
@@ -435,14 +497,19 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
     var hit=hourStat.filter(function(o){ return Math.abs(o.mean)>2*o.se && o.se>0; });
     var expect=HOURS*0.05;
     var el=document.getElementById('verdict');
-    var names=hit.map(function(o){ return (o.h<10?'0':'')+o.h+':00'; }).join(', ');
-    el.innerHTML = '<b>'+hit.length+' of '+HOURS+' hours</b> clear twice their standard error'+
-      (hit.length?' ('+names+')':'')+'. Testing '+HOURS+' of them at that bar, about <b>'+
-      expect.toFixed(1)+'</b> would be expected to do so even if the hour of the day '+
-      'meant nothing at all. '+
-      (hit.length>expect*2
-        ? 'That is more than chance would give you — worth a longer sample.'
-        : 'So this is what <b>no effect</b> looks like, not evidence of one.');
+    var names=hit.map(function(o){ return (o.h<10?'0':'')+o.h+':00'; });
+    var lots=hit.length>expect*2;
+    el.innerHTML =
+      '<b>'+(lots?'The hour of the day matters here.':'The hour of the day does not matter here.')+
+      '</b> '+hit.length+' of '+HOURS+' hours have a mean that clears twice its own '+
+      'standard error'+
+      (hit.length && hit.length<=6 ? ' ('+names.join(', ')+')' : '')+
+      ', where about '+expect.toFixed(1)+' would clear it by chance alone even if nothing '+
+      'were there. '+
+      (lots
+        ? 'That is far more than chance gives you, which is why the banding below is real.'
+        : 'That is what chance gives you, so the confetti below is confetti \u2014 there is no '+
+          'daily rhythm in this to find.');
   }
 
   function drawHours(){
@@ -473,7 +540,7 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
     hx.textAlign='right'; hx.textBaseline='middle';
     hx.fillText('mean', L-9, T+ch/2);
     hx.textAlign='left'; hx.textBaseline='alphabetic';
-    hx.fillText('hour of day (UTC)  ·  \u00b1'+hourScale.toFixed(3)+'%', L, T-7);
+    hx.fillText('hour of day (UTC)  ·  \u00b1'+hourScale.toFixed(2)+unit(), L, T-7);
   }
   function hoursHit(ev){
     if(!hourStat) return;
@@ -490,7 +557,7 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
     }
     var o=hourStat[i], sig=Math.abs(o.mean)>2*o.se && o.se>0;
     el.innerHTML='<b>'+(o.h<10?'0':'')+o.h+':00 UTC</b> &nbsp; mean '+
-      (o.mean>=0?'+':'')+o.mean.toFixed(3)+'% &nbsp;\u00b1 '+o.se.toFixed(3)+
+      (o.mean>=0?'+':'')+o.mean.toFixed(2)+unit()+' &nbsp;\u00b1 '+o.se.toFixed(2)+
       ' (standard error, n='+o.n+') &nbsp; '+
       (sig?'<b>clears twice its error</b>':'within noise');
   }
@@ -512,9 +579,9 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
     var who='<b>'+DAYNAME[day]+' '+(hr<10?'0':'')+hr+':00 UTC</b>';
     el.innerHTML = v===null ? who+' — no reading'
       : mode==='mean'
-        ? who+' &nbsp; mean '+(v>=0?'+':'')+v.toFixed(3)+'% &nbsp; over '+
+        ? who+' &nbsp; mean '+(v>=0?'+':'')+v.toFixed(2)+unit()+' &nbsp; over '+
           meanN[day*HOURS+hr]+' weeks'
-        : who+' &nbsp; '+(v>=0?'+':'')+v.toFixed(3)+'% in that hour';
+        : who+' &nbsp; '+(v>=0?'+':'')+v.toFixed(2)+unit();
   }
   flat.addEventListener('mousemove',flatHit);
   flat.addEventListener('touchstart',function(e){ flatHit(e); e.preventDefault(); },{passive:false});
@@ -591,11 +658,11 @@ A ring marks an hour whose mean clears twice its own standard error.</p>
   function paintCoins(){
     var host=document.getElementById('coins');
     host.innerHTML='';
-    COINS.forEach(function(c){
+    SOURCES.forEach(function(c){
       var b=document.createElement('button');
-      b.className = c[0]===coin ? 'chip on' : 'chip';
-      b.textContent=c[1];
-      b.addEventListener('click',function(){ if(c[0]!==coin) load(c[0]); });
+      b.className = c.id===coin ? 'chip on' : 'chip';
+      b.textContent = c.control ? c.name+' \u00b7 control' : c.name;
+      b.addEventListener('click',function(){ if(c.id!==coin) load(c.id); });
       host.appendChild(b);
     });
   }

@@ -515,10 +515,16 @@ It does not. That is the point of building it: at single-hour resolution the
 effect is a fraction of an hour's own swing, so the block is confetti, and
 averaging twelve weeks only divides the noise by three and a half. Collapsing
 the weekday axis as well leaves ninety readings an hour, which is the only cut
-with enough in each bucket to answer the question — and the page states the
+with enough in each bucket to answer the question — and the page leads with the
 answer in the form that matters: **1 of 24 hours clears twice its standard
 error, where about 1.2 would be expected if the hour meant nothing at all.**
 That is what no effect looks like.
+
+Which is useless on its own, because a block of noise and a broken chart look
+identical. So one of the subjects is **air temperature** — a daily cycle nobody
+disputes. There the banding is unmistakable and holds all the way back through
+the solid, and the same line reads **23 of 24 hours**. Switching between the two
+is the whole page: it is what lets you trust the confetti.
 
 The block is for spotting, the flat panel is for reading, and there is a table
 view because a turning translucent solid is a bad instrument for precise
