@@ -68,7 +68,7 @@
 
   /* pips showing where you are in the set */
   #quick{
-    position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 124px);
+    position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 154px);
     z-index:33;padding:0 14px;pointer-events:none;
   }
   #quick.off{display:none;}
@@ -108,12 +108,6 @@
     background:linear-gradient(to bottom, #E8C24E, var(--accent));
     color:var(--void);border-color:rgba(0,0,0,.35);
     box-shadow:0 2px 5px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.5);}
-  #pips{
-    position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 100px);
-    z-index:32;display:flex;justify-content:center;gap:6px;pointer-events:none;
-  }
-  #pips i{width:5px;height:5px;border-radius:50%;background:rgba(240,237,227,.3);transition:background .2s,transform .2s;}
-  #pips i.on{background:var(--accent);transform:scale(1.5);}
 
   /* the lens itself, on the picture — only appears when the driver allows it */
   #lens{
@@ -375,7 +369,7 @@
 
   #quick{
     left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));
-    bottom:calc(env(safe-area-inset-bottom,0px) + 122px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 152px);
     padding:10px 12px 9px;border:1px solid var(--glass-line);border-radius:25px;
     background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(15,16,21,.28));
     box-shadow:var(--glass-shadow);
@@ -397,9 +391,6 @@
     color:#fff;border-color:rgba(255,255,255,.3);
     box-shadow:0 5px 14px rgba(0,0,0,.28),0 0 22px rgba(var(--accent-rgb),.22),inset 0 1px 0 rgba(255,255,255,.36);
   }
-  #pips{bottom:calc(env(safe-area-inset-bottom,0px) + 105px);transition:opacity .2s,transform .25s;}
-  #pips i{width:5px;height:5px;box-shadow:0 1px 4px rgba(0,0,0,.45);}
-  #pips i.on{background:rgb(var(--accent-rgb));box-shadow:0 0 10px rgba(var(--accent-rgb),.72);}
 
   /* ---------- the rail ----------
      Forty-one dots needed 445px on a 390px screen, so they were squeezed to
@@ -410,8 +401,8 @@
   #rail{
     position:fixed;z-index:34;
     left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));
-    bottom:calc(env(safe-area-inset-bottom,0px) + 96px);
-    height:32px;display:flex;align-items:center;gap:8px;padding:0 10px;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 106px);
+    height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;
     border:1px solid var(--glass-line);border-radius:16px;
     background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(15,16,21,.26));
     box-shadow:0 8px 22px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.18);
@@ -445,7 +436,7 @@
   /* the name of whatever the finger is currently over, while scrubbing */
   #railTag{
     position:fixed;z-index:35;left:50%;transform:translateX(-50%) translateY(6px);
-    bottom:calc(env(safe-area-inset-bottom,0px) + 134px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 152px);
     padding:7px 13px;border-radius:14px;opacity:0;pointer-events:none;
     border:1px solid rgba(255,255,255,.2);
     background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(15,16,21,.44));
@@ -659,7 +650,7 @@
     -webkit-backdrop-filter:blur(16px) saturate(1.3);backdrop-filter:blur(16px) saturate(1.3);
   }
 
-  body.sheet-open #quick,body.sheet-open #pips{opacity:0;transform:translateY(10px);pointer-events:none;}
+  body.sheet-open #quick{opacity:0;transform:translateY(10px);pointer-events:none;}
   body.camera-pop #hud .stack{animation:cameraPop .28s cubic-bezier(.2,.8,.25,1);}
   @keyframes cameraPop{0%{opacity:.2;transform:translateY(-5px) scale(.97)}100%{opacity:1;transform:none}}
 
@@ -672,9 +663,10 @@
     #sheet,#gate .card{background:rgba(235,232,224,.97);}
   }
   @media (max-height:620px){
-    #quick{bottom:calc(env(safe-area-inset-bottom,0px) + 104px);padding:7px 10px;}
+    #quick{bottom:calc(env(safe-area-inset-bottom,0px) + 136px);padding:7px 10px;}
     #quick .qrow{display:none;}
-    #pips{bottom:calc(env(safe-area-inset-bottom,0px) + 90px);}
+    #rail{bottom:calc(env(safe-area-inset-bottom,0px) + 96px);height:30px;}
+    #railTag{bottom:calc(env(safe-area-inset-bottom,0px) + 134px);}
     #sheet{max-height:76vh;}
     #deck{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 12px);}
   }
