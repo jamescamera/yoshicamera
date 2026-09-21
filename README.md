@@ -501,6 +501,41 @@ the bottom of `index.html` if you'd rather it didn't.
 
 ---
 
+## Block — the same idea, pointed at a market
+
+[yoshicamera.com/block](https://yoshicamera.com/block) is a separate page that
+borrows Loaf's renderer and loads a price series into it instead of a camera
+feed. Ninety days of hourly prices are folded so that **across** is the hour of
+the day, **down** is the day of the week, and **back** is the week — nothing
+averaged away, every cell one specific hour of one specific day. If the hour of
+the day matters it shows as vertical banding holding all the way back through
+the block; if the weekday matters, horizontal banding.
+
+It does not. That is the point of building it: at single-hour resolution the
+effect is a fraction of an hour's own swing, so the block is confetti, and
+averaging twelve weeks only divides the noise by three and a half. Collapsing
+the weekday axis as well leaves ninety readings an hour, which is the only cut
+with enough in each bucket to answer the question — and the page states the
+answer in the form that matters: **1 of 24 hours clears twice its standard
+error, where about 1.2 would be expected if the hour meant nothing at all.**
+That is what no effect looks like.
+
+The block is for spotting, the flat panel is for reading, and there is a table
+view because a turning translucent solid is a bad instrument for precise
+values. Colour is a diverging blue↔red with a neutral grey midpoint — validated
+for colour-vision deficiency at ΔE 19.2, and deliberately not the red/green
+that financial charts reach for first.
+
+Prices come from CoinGecko, which is free and needs no API key and sends
+`access-control-allow-origin: *`, so a static page can fetch it directly. That
+last part is the real constraint: Stooq and Yahoo are free too but send no CORS
+header at all, and every equities source either needs a key or cannot be
+reached from a browser. Crypto is also the better subject here — it trades
+continuously, so the grain is unbroken, where a stock market's nights and
+weekends would cut the block into stripes that say nothing about behaviour.
+
+---
+
 ## Prior art
 
 [allRGB](https://allrgb.com) is a long-running community built around the

@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Block — a market as a solid</title>
+<meta name="description" content="Ninety days of hourly prices folded so the daily and weekly cycles become axes of a solid you can turn, cut and take a slice out of.">
+<style>
+  :root{
+    --void:#0C0D10;
+    --surface:#15161a;
+    --ink:#F2F0EA;
+    --ink-soft:#8f8d86;
+    --ink-mute:#5f5e59;
+    --rule:rgba(242,240,234,.14);
+    --accent:#C9A227;
+    /* diverging pair: blue <-> red, neutral grey midpoint.
+       Validated against this surface: CVD dE 19.2 (protan), normal-vision 29.0,
+       both poles >= 3:1 contrast. Deliberately not red/green. */
+    --up:#3987e5;
+    --down:#e66767;
+    --mid:#383835;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;background:var(--void);color:var(--ink);}
+  body{
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:max(16px,env(safe-area-inset-top)) 16px calc(env(safe-area-inset-bottom,0px) + 40px);
+    max-width:940px;margin:0 auto;
+  }
+  h1{font-size:15px;letter-spacing:.28em;text-transform:uppercase;margin:0 0 3px;font-weight:600;}
+  .sub{color:var(--ink-soft);font-size:12.5px;margin:0 0 18px;}
+  .lbl{font-size:9.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--ink-mute);
+       margin:22px 0 7px;}
+  /* ---- controls ---- */
+  .row{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+  button.chip{
+    font:inherit;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink);background:rgba(242,240,234,.07);border:1px solid var(--rule);
+    border-radius:20px;padding:8px 13px;cursor:pointer;
+  }
+  button.chip.on{background:var(--accent);border-color:var(--accent);color:#17170f;font-weight:600;}
+  button.chip:disabled{opacity:.4;cursor:default;}
+  .sld{flex:1 1 150px;min-width:140px;}
+  .sld label{display:flex;gap:8px;font-size:9.5px;letter-spacing:.2em;
+             text-transform:uppercase;color:var(--ink-mute);margin-bottom:5px;}
+  .sld label b{color:var(--ink);font-weight:600;letter-spacing:.06em;}
+  input[type=range]{width:100%;accent-color:var(--accent);}
+  /* ---- the block ---- */
+  #stageWrap{position:relative;margin-top:14px;border:1px solid var(--rule);border-radius:16px;
+             overflow:hidden;background:#0a0b0e;}
+  #stage{display:block;width:100%;height:auto;touch-action:none;cursor:grab;}
+  #stage:active{cursor:grabbing;}
+  #hint{position:absolute;left:12px;top:11px;font-size:9.5px;letter-spacing:.2em;
+        text-transform:uppercase;color:var(--ink-mute);pointer-events:none;}
+  /* ---- the flat slice ---- */
+  #flat,#hours{width:100%;height:auto;display:block;border:1px solid var(--rule);
+        border-radius:12px;background:var(--surface);}
+  #hoursRead{font-size:12px;color:var(--ink-soft);margin:9px 0 0;}
+  #hoursRead b{color:var(--ink);}
+  #verdict{font-size:12.5px;color:var(--ink-soft);margin:11px 0 0;padding:11px 13px;
+           border:1px solid var(--rule);border-radius:10px;background:rgba(242,240,234,.035);}
+  #verdict b{color:var(--ink);}
+  #read{font-size:12px;color:var(--ink-soft);margin:9px 0 0;min-height:20px;}
+  #read b{color:var(--ink);}
+  /* ---- legend ---- */
+  .legend{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;}
+  .ramp{height:11px;width:190px;border-radius:3px;border:1px solid var(--rule);}
+  .legend span{font-size:10px;letter-spacing:.1em;color:var(--ink-soft);}
+  /* ---- table ---- */
+  #tableWrap{display:none;margin-top:12px;max-height:340px;overflow:auto;
+             border:1px solid var(--rule);border-radius:12px;}
+  table{border-collapse:collapse;width:100%;font-size:11px;font-variant-numeric:tabular-nums;}
+  th,td{padding:5px 8px;text-align:right;border-bottom:1px solid rgba(242,240,234,.07);white-space:nowrap;}
+  th{position:sticky;top:0;background:var(--surface);color:var(--ink-mute);font-weight:600;
+     font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  td.u{color:var(--up);} td.d{color:var(--down);}
+  .note{color:var(--ink-soft);font-size:12.5px;border-top:1px solid var(--rule);
+        margin-top:30px;padding-top:16px;}
+  .note p{margin:0 0 11px;}
+  .note b{color:var(--ink);font-weight:600;}
+  a{color:var(--accent);}
+  #status{font-size:11.5px;color:var(--ink-soft);margin-top:9px;min-height:18px;}
+  #status.err{color:var(--down);}
+</style>
+</head>
+<body>
+
+<h1>Block</h1>
+<p class="sub">Ninety days of hourly prices, folded so the daily and weekly cycles
+become axes of a solid. Drag to turn it.</p>
+
+<div class="row" id="coins"></div>
+<p id="status">Loading…</p>
+
+<div id="stageWrap">
+  <canvas id="stage" width="900" height="560"></canvas>
+  <div id="hint">drag to turn</div>
+</div>
+
+<div class="row" style="margin-top:14px">
+  <div class="sld"><label>Cut <b id="vCut">0</b></label>
+    <input type="range" id="cut" min="0" max="100" value="0"></div>
+  <div class="sld"><label>Depth <b id="vDepth">100</b></label>
+    <input type="range" id="depth" min="10" max="100" value="100"></div>
+  <div class="sld"><label>Density <b id="vDen">78</b></label>
+    <input type="range" id="den" min="10" max="100" value="78"></div>
+</div>
+<div class="row" style="margin-top:10px">
+  <button class="chip on" id="bTurn">Turning</button>
+  <button class="chip" id="bFlat">Face on</button>
+  <button class="chip" id="bTable">Table view</button>
+</div>
+<div class="row" style="margin-top:10px">
+  <button class="chip on" id="mWeek">One week</button>
+  <button class="chip" id="mMean">Average of every week</button>
+</div>
+
+<p class="lbl" id="flatLbl">The week at the cut</p>
+<canvas id="flat" width="900" height="300"></canvas>
+<p id="read">Hover or tap a cell to read it.</p>
+
+<div class="legend">
+  <span>Down</span><div class="ramp" id="ramp"></div><span>Up</span>
+  <span id="rampScale" style="margin-left:4px"></span>
+</div>
+
+<p class="lbl">All ninety days, by hour of day</p>
+<canvas id="hours" width="900" height="132"></canvas>
+<p id="hoursRead">Each cell is every reading at that hour, averaged — ninety of them.
+A ring marks an hour whose mean clears twice its own standard error.</p>
+<p id="verdict"></p>
+
+<div id="tableWrap"><table id="tbl"></table></div>
+
+<div class="note">
+  <p><b>What you are looking at.</b> Every hourly move of the last ninety days,
+  re-indexed so that <b>across</b> is the hour of the day (00–23 UTC),
+  <b>down</b> is the day of the week, and <b>back</b> is the week. Nothing is
+  averaged away — each cell is one specific hour of one specific day. If the
+  hour of the day matters, it shows as vertical banding that holds all the way
+  back through the block. If the day of the week matters, it shows as horizontal
+  banding. If neither does, it looks like noise, and that is the honest answer.</p>
+  <p><b>The block is for spotting, not for reading.</b> A turning, translucent
+  solid is a bad instrument for precise values — it occludes, it foreshortens,
+  it blends. Cut to a week and read it off the flat panel, or open the table.</p>
+  <p><b>It is a way of looking, not a signal.</b> Nothing here is advice, and
+  ninety days of one asset is a small sample: testing twenty-four hours at once
+  means the strongest-looking hour will look strong by chance more often than
+  the numbers suggest.</p>
+  <p>Crypto rather than equities on purpose: it trades continuously, so the
+  grain is unbroken. A stock market's nights and weekends would cut the block
+  into stripes that say nothing about behaviour. Prices from
+  <a href="https://www.coingecko.com">CoinGecko</a>, free and without a key.</p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var HOURS=24, DAYS=7;
+  var COINS=[['bitcoin','Bitcoin'],['ethereum','Ethereum'],['solana','Solana'],['dogecoin','Dogecoin']];
+  var coin='bitcoin', cells=null, weeks=[], scale=1;
+  var meanCells=null, meanScale=1, meanN=null, mode='week';
+  var hourStat=null, hourScale=1;
+  var hours=document.getElementById('hours'), hx=hours.getContext('2d');
+
+  var stage=document.getElementById('stage'), ctx=stage.getContext('2d');
+  var flat=document.getElementById('flat'), fx=flat.getContext('2d');
+  var statusEl=document.getElementById('status');
+
+  function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function hex(h){ return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]; }
+  var UP=hex('#3987e5'), DOWN=hex('#e66767'), MID=hex('#383835');
+
+  /* diverging: two hues away from a neutral grey middle, never a hue at zero */
+  function colour(v){
+    if(v===null||v===undefined||v!==v) return [20,21,25];
+    var t=clamp(Math.abs(v)/(arguments.length>1?arguments[1]:scale),0,1);
+    t=Math.pow(t,0.72);                       // ease, so ordinary hours are not all grey
+    var pole=v>=0?UP:DOWN;
+    return [Math.round(lerp(MID[0],pole[0],t)),
+            Math.round(lerp(MID[1],pole[1],t)),
+            Math.round(lerp(MID[2],pole[2],t))];
+  }
+  function css(c){ return 'rgb('+c[0]+','+c[1]+','+c[2]+')'; }
+
+  /* ---------- data ---------- */
+  function load(id){
+    coin=id; cells=null; paintCoins();
+    statusEl.className=''; statusEl.textContent='Loading ninety days of '+id+'…';
+    var url='https://api.coingecko.com/api/v3/coins/'+id+
+            '/market_chart?vs_currency=usd&days=90';
+    fetch(url).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(j){
+      if(!j.prices || j.prices.length<48) throw new Error('not enough data');
+      build(j.prices);
+      statusEl.textContent = weeks.length+' weeks · '+j.prices.length+
+        ' hourly prices · '+fmtDate(weeks[weeks.length-1].t0)+' to '+fmtDate(weeks[0].t1);
+      draw(); drawFlat(); drawHours();
+    })['catch'](function(e){
+      statusEl.className='err';
+      statusEl.textContent='Could not reach CoinGecko ('+e.message+
+        '). It is free and needs no key, but it does rate-limit — try again shortly.';
+    });
+  }
+  function setRampLabel(){
+    document.getElementById('rampScale').textContent =
+      '±'+(mode==='mean'?meanScale:scale).toFixed(2)+'% per hour'+
+      (mode==='mean'?' (averaged)':'');
+  }
+  function gridNow(){
+    return mode==='mean' ? meanCells : cells[cutIndex()];
+  }
+  function scaleNow(){ return mode==='mean' ? meanScale : scale; }
+  function fmtDate(ms){
+    var d=new Date(ms);
+    return d.toUTCString().slice(5,11);
+  }
+
+  /* fold the series into [week][weekday][hour] */
+  function build(prices){
+    var pts=[], i;
+    for(i=1;i<prices.length;i++){
+      var prev=prices[i-1][1], cur=prices[i][1];
+      if(!prev) continue;
+      pts.push({t:prices[i][0], v:(cur-prev)/prev*100, p:cur});
+    }
+    if(!pts.length) return;
+    /* week 0 is the most recent; walk back in 7-day blocks from the last point,
+       so the front of the block is always "now" rather than a calendar edge */
+    var end=pts[pts.length-1].t, WEEK=7*24*3600*1000;
+    var nW=Math.max(1,Math.floor((end-pts[0].t)/WEEK));
+    weeks=[];
+    for(i=0;i<nW;i++) weeks.push({t1:end-i*WEEK, t0:end-(i+1)*WEEK, n:0});
+    cells=[];
+    for(i=0;i<nW;i++){
+      var g=new Array(DAYS*HOURS);
+      for(var k=0;k<g.length;k++) g[k]=null;
+      cells.push(g);
+    }
+    pts.forEach(function(p){
+      var w=Math.floor((end-p.t)/WEEK);
+      if(w<0||w>=nW) return;
+      var into=weeks[w].t1-p.t;                 // ms back from that week's end
+      var slot=Math.floor(into/3600000);        // 0..167
+      if(slot<0||slot>=DAYS*HOURS) return;
+      var d=new Date(p.t);
+      var idx=(d.getUTCDay()*HOURS)+d.getUTCHours();
+      cells[w][idx]=p.v;
+      weeks[w].n++;
+    });
+    /* symmetric domain from a robust percentile, so one spike does not
+       flatten every ordinary hour to grey */
+    var all=[];
+    pts.forEach(function(p){ all.push(Math.abs(p.v)); });
+    all.sort(function(a,b){ return a-b; });
+    scale=Math.max(0.05, all[Math.floor(all.length*0.96)]||1);
+
+    /* One hour of one day is almost entirely noise — the hour-of-day effect is
+       a fraction of an hour's own swing, so no single cell can ever show it.
+       Averaging the same (weekday, hour) across every week divides that noise
+       by the root of the count while leaving any real effect standing, which
+       is the only way to find out whether there is one. */
+    meanCells=new Array(DAYS*HOURS); meanN=new Array(DAYS*HOURS);
+    var sums=new Array(DAYS*HOURS), cnts=new Array(DAYS*HOURS), q;
+    for(q=0;q<DAYS*HOURS;q++){ sums[q]=0; cnts[q]=0; }
+    for(var wI=0;wI<cells.length;wI++) for(q=0;q<DAYS*HOURS;q++){
+      var vv=cells[wI][q];
+      if(vv!==null){ sums[q]+=vv; cnts[q]++; }
+    }
+    var mAbs=[];
+    for(q=0;q<DAYS*HOURS;q++){
+      meanN[q]=cnts[q];
+      meanCells[q]= cnts[q] ? sums[q]/cnts[q] : null;
+      if(meanCells[q]!==null) mAbs.push(Math.abs(meanCells[q]));
+    }
+    mAbs.sort(function(a,b){ return a-b; });
+    meanScale=Math.max(0.01, mAbs[Math.floor(mAbs.length*0.96)]||0.2);
+
+    /* Collapsing the weekday axis as well leaves ninety readings an hour
+       rather than twelve, which divides the noise by nine and a half instead
+       of three and a half. That is the only cut of this data with enough in
+       each bucket to say whether an hour-of-day effect exists at all. */
+    hourStat=[];
+    for(var hh=0;hh<HOURS;hh++){
+      var acc=[];
+      pts.forEach(function(p){ if(new Date(p.t).getUTCHours()===hh) acc.push(p.v); });
+      var n=acc.length, m=0, sd=0, i2;
+      for(i2=0;i2<n;i2++) m+=acc[i2];
+      m = n? m/n : 0;
+      for(i2=0;i2<n;i2++) sd += (acc[i2]-m)*(acc[i2]-m);
+      sd = n>1 ? Math.sqrt(sd/(n-1)) : 0;
+      hourStat.push({h:hh, n:n, mean:m, se: n? sd/Math.sqrt(n) : 0});
+    }
+    var hAbs=hourStat.map(function(o){ return Math.abs(o.mean); }).sort(function(a,b){return a-b;});
+    hourScale=Math.max(0.01, hAbs[hAbs.length-1]||0.1);
+    sayVerdict();
+    setRampLabel();
+  }
+
+  /* ---------- the block ---------- */
+  var yaw=-0.72, pitch=0.42, spin=true, faceOn=false;
+  var A=[0,0],B=[0,0],C=[0,0];
+  var cyy=1,syy=0,cpp=1,spp=0,ox=0,oy=0,SCL=1,HY=DAYS/HOURS,HZ=1,D=6.0,fit=0;
+  var slice=document.createElement('canvas'); slice.width=HOURS; slice.height=DAYS;
+  var sx=slice.getContext('2d');
+
+  function proj(x,y,z,o){
+    var X=x*cyy+z*syy, Z=-x*syy+z*cyy;
+    var Y=y*cpp-Z*spp; Z=y*spp+Z*cpp;
+    var k=SCL*D/(D-Z);
+    o[0]=ox+X*k; o[1]=oy-Y*k;
+  }
+  function quadAt(z){ proj(-1,HY,z,A); proj(1,HY,z,B); proj(-1,-HY,z,C); }
+  function fitScale(w,h){
+    var mx=1e-6,my=1e-6,i,x,y,z,X,Y,Z,k;
+    for(i=0;i<8;i++){
+      x=(i&1)?1:-1; y=(i&2)?HY:-HY; z=(i&4)?HZ:-HZ;
+      X=x*cyy+z*syy; Z=-x*syy+z*cyy;
+      Y=y*cpp-Z*spp; Z=y*spp+Z*cpp;
+      k=D/(D-Z);
+      if(Math.abs(X*k)>mx) mx=Math.abs(X*k);
+      if(Math.abs(Y*k)>my) my=Math.abs(Y*k);
+    }
+    return Math.min((w/2)/mx,(h/2)/my);
+  }
+  function fillSlice(w){
+    var img=sx.createImageData(HOURS,DAYS), d=img.data, i, c;
+    for(i=0;i<HOURS*DAYS;i++){
+      var day=Math.floor(i/HOURS), hr=i%HOURS;
+      c=colour(cells[w][day*HOURS+hr]);
+      d[i*4]=c[0]; d[i*4+1]=c[1]; d[i*4+2]=c[2]; d[i*4+3]=255;
+    }
+    sx.putImageData(img,0,0);
+  }
+  function cutIndex(){
+    if(!cells) return 0;
+    var n=drawnWeeks();
+    return Math.round((+document.getElementById('cut').value/100)*(n-1));
+  }
+  function drawnWeeks(){
+    if(!cells) return 1;
+    var q=+document.getElementById('depth').value/100;
+    return Math.max(2,Math.round(cells.length*q));
+  }
+
+  function draw(){
+    var W=stage.width, H=stage.height;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#0a0b0e'; ctx.fillRect(0,0,W,H);
+    if(!cells){ return; }
+    var n=drawnWeeks(), cut=cutIndex();
+    HZ=0.30+0.95*(n/Math.max(1,cells.length));
+    cyy=Math.cos(yaw); syy=Math.sin(yaw); cpp=Math.cos(pitch); spp=Math.sin(pitch);
+    var want=fitScale(W,H)*0.80;
+    fit = fit>0 ? fit+(want-fit)*0.12 : want;
+    SCL=fit; ox=W/2; oy=H/2;
+
+    var dens=+document.getElementById('den').value/100;
+    var a=0.20+0.80*dens, ghost=Math.min(1,3.6*(0.10+1.0*dens)/n)*0.45;
+    var back=(cyy*cpp)>0, near=back?cut:n-1, j, z, i;
+    ctx.imageSmoothingEnabled=false;
+    for(i=0;i<n;i++){
+      j = back ? (n-1-i) : i;
+      z = HZ - (j/(n-1))*2*HZ;
+      quadAt(z);
+      fillSlice(j);
+      ctx.globalAlpha = (j<cut) ? ghost : (j===near ? 1 : a);
+      ctx.setTransform((B[0]-A[0])/HOURS,(B[1]-A[1])/HOURS,
+                       (C[0]-A[0])/DAYS,(C[1]-A[1])/DAYS, A[0], A[1]);
+      ctx.drawImage(slice,0,0);
+    }
+    /* the box, from the same affine maps so it cannot drift off the picture */
+    ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1;
+    ctx.imageSmoothingEnabled=true;
+    ctx.strokeStyle='rgba(242,240,234,.26)'; ctx.lineWidth=1; ctx.lineJoin='round';
+    var box=[];
+    [HZ,-HZ].forEach(function(zz){
+      quadAt(zz);
+      box.push([A[0],A[1]],[B[0],B[1]],[B[0]+C[0]-A[0],B[1]+C[1]-A[1]],[C[0],C[1]]);
+    });
+    var E=[0,1,1,2,2,3,3,0,4,5,5,6,6,7,7,4,0,4,1,5,2,6,3,7];
+    ctx.beginPath();
+    for(i=0;i<E.length;i+=2){ ctx.moveTo(box[E[i]][0],box[E[i]][1]); ctx.lineTo(box[E[i+1]][0],box[E[i+1]][1]); }
+    ctx.stroke();
+    if(cut>0){
+      quadAt(HZ-(cut/(n-1))*2*HZ);
+      ctx.strokeStyle='rgba(201,162,39,.9)'; ctx.lineWidth=1.6;
+      ctx.beginPath();
+      ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
+      ctx.lineTo(B[0]+C[0]-A[0],B[1]+C[1]-A[1]); ctx.lineTo(C[0],C[1]);
+      ctx.closePath(); ctx.stroke();
+    }
+  }
+
+  /* ---------- the flat slice: where values are actually readable ---------- */
+  var PADL=54, PADT=26, PADB=24, PADR=12;
+  var DAYNAME=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  function drawFlat(){
+    var W=flat.width, H=flat.height;
+    fx.setTransform(1,0,0,1,0,0);
+    fx.fillStyle='#15161a'; fx.fillRect(0,0,W,H);
+    if(!cells) return;
+    var w=cutIndex(), grid=gridNow(), sc=scaleNow();
+    var cw=(W-PADL-PADR)/HOURS, ch=(H-PADT-PADB)/DAYS;
+    var hr,day,v;
+    for(day=0;day<DAYS;day++) for(hr=0;hr<HOURS;hr++){
+      v=grid[day*HOURS+hr];
+      fx.fillStyle = (v===null) ? '#101116' : css(colour(v,sc));
+      /* 2px surface gap between cells, per the mark spec */
+      fx.fillRect(PADL+hr*cw+1, PADT+day*ch+1, cw-2, ch-2);
+    }
+    fx.fillStyle='#8f8d86'; fx.font='10px ui-sans-serif,system-ui,sans-serif';
+    fx.textAlign='right'; fx.textBaseline='middle';
+    for(day=0;day<DAYS;day++) fx.fillText(DAYNAME[day], PADL-9, PADT+day*ch+ch/2);
+    fx.textAlign='center'; fx.textBaseline='top';
+    for(hr=0;hr<HOURS;hr+=3) fx.fillText((hr<10?'0':'')+hr, PADL+hr*cw+cw/2, PADT+DAYS*ch+7);
+    fx.textAlign='left'; fx.textBaseline='alphabetic';
+    fx.fillText('hour of day (UTC)', PADL, PADT-10);
+    document.getElementById('flatLbl').textContent = mode==='mean'
+      ? 'Every week averaged — '+cells.length+' readings per cell'
+      : 'Week of '+fmtDate(weeks[w].t0)+' — '+fmtDate(weeks[w].t1)+
+        (w===0?' (most recent)':'  ·  '+w+' week'+(w===1?'':'s')+' back');
+  }
+  /* The number that matters is not how many hours look strong but how many
+     you would expect to look strong if nothing were there at all. Testing
+     twenty-four of them at a one-in-twenty bar, that is about one. Saying so
+     is the difference between a chart and a claim. */
+  function sayVerdict(){
+    var hit=hourStat.filter(function(o){ return Math.abs(o.mean)>2*o.se && o.se>0; });
+    var expect=HOURS*0.05;
+    var el=document.getElementById('verdict');
+    var names=hit.map(function(o){ return (o.h<10?'0':'')+o.h+':00'; }).join(', ');
+    el.innerHTML = '<b>'+hit.length+' of '+HOURS+' hours</b> clear twice their standard error'+
+      (hit.length?' ('+names+')':'')+'. Testing '+HOURS+' of them at that bar, about <b>'+
+      expect.toFixed(1)+'</b> would be expected to do so even if the hour of the day '+
+      'meant nothing at all. '+
+      (hit.length>expect*2
+        ? 'That is more than chance would give you — worth a longer sample.'
+        : 'So this is what <b>no effect</b> looks like, not evidence of one.');
+  }
+
+  function drawHours(){
+    var W=hours.width, H=hours.height;
+    hx.setTransform(1,0,0,1,0,0);
+    hx.fillStyle='#15161a'; hx.fillRect(0,0,W,H);
+    if(!hourStat) return;
+    var L=54, R=12, T=20, B=30;
+    var cw=(W-L-R)/HOURS, ch=H-T-B;
+    hx.textAlign='center';
+    for(var i=0;i<HOURS;i++){
+      var o=hourStat[i];
+      hx.fillStyle=css(colour(o.mean,hourScale));
+      hx.fillRect(L+i*cw+1, T+1, cw-2, ch-2);
+      /* the only claim made on the picture: this hour's mean is more than
+         twice its own standard error from zero */
+      if(Math.abs(o.mean) > 2*o.se && o.se>0){
+        hx.strokeStyle='rgba(242,240,234,.9)'; hx.lineWidth=1.5;
+        hx.beginPath(); hx.arc(L+i*cw+cw/2, T+ch-11, 3.4, 0, 6.3); hx.stroke();
+      }
+      if(i%3===0){
+        hx.fillStyle='#8f8d86'; hx.font='10px ui-sans-serif,system-ui,sans-serif';
+        hx.textBaseline='top';
+        hx.fillText((i<10?'0':'')+i, L+i*cw+cw/2, T+ch+7);
+      }
+    }
+    hx.fillStyle='#8f8d86'; hx.font='10px ui-sans-serif,system-ui,sans-serif';
+    hx.textAlign='right'; hx.textBaseline='middle';
+    hx.fillText('mean', L-9, T+ch/2);
+    hx.textAlign='left'; hx.textBaseline='alphabetic';
+    hx.fillText('hour of day (UTC)  ·  \u00b1'+hourScale.toFixed(3)+'%', L, T-7);
+  }
+  function hoursHit(ev){
+    if(!hourStat) return;
+    var r=hours.getBoundingClientRect();
+    var t=ev.touches?ev.touches[0]:ev;
+    var px=(t.clientX-r.left)*(hours.width/r.width);
+    var L=54, R=12, cw=(hours.width-L-R)/HOURS;
+    var i=Math.floor((px-L)/cw);
+    var el=document.getElementById('hoursRead');
+    if(i<0||i>=HOURS){
+      el.innerHTML='Each cell is every reading at that hour, averaged — ninety of them. '+
+                   'A ring marks an hour whose mean clears twice its own standard error.';
+      return;
+    }
+    var o=hourStat[i], sig=Math.abs(o.mean)>2*o.se && o.se>0;
+    el.innerHTML='<b>'+(o.h<10?'0':'')+o.h+':00 UTC</b> &nbsp; mean '+
+      (o.mean>=0?'+':'')+o.mean.toFixed(3)+'% &nbsp;\u00b1 '+o.se.toFixed(3)+
+      ' (standard error, n='+o.n+') &nbsp; '+
+      (sig?'<b>clears twice its error</b>':'within noise');
+  }
+  hours.addEventListener('mousemove',hoursHit);
+  hours.addEventListener('touchstart',function(e){ hoursHit(e); e.preventDefault(); },{passive:false});
+  hours.addEventListener('touchmove',function(e){ hoursHit(e); e.preventDefault(); },{passive:false});
+
+  function flatHit(ev){
+    if(!cells) return;
+    var r=flat.getBoundingClientRect();
+    var t=ev.touches?ev.touches[0]:ev;
+    var px=(t.clientX-r.left)*(flat.width/r.width);
+    var py=(t.clientY-r.top)*(flat.height/r.height);
+    var cw=(flat.width-PADL-PADR)/HOURS, ch=(flat.height-PADT-PADB)/DAYS;
+    var hr=Math.floor((px-PADL)/cw), day=Math.floor((py-PADT)/ch);
+    var el=document.getElementById('read');
+    if(hr<0||hr>=HOURS||day<0||day>=DAYS){ el.textContent='Hover or tap a cell to read it.'; return; }
+    var v=gridNow()[day*HOURS+hr];
+    var who='<b>'+DAYNAME[day]+' '+(hr<10?'0':'')+hr+':00 UTC</b>';
+    el.innerHTML = v===null ? who+' — no reading'
+      : mode==='mean'
+        ? who+' &nbsp; mean '+(v>=0?'+':'')+v.toFixed(3)+'% &nbsp; over '+
+          meanN[day*HOURS+hr]+' weeks'
+        : who+' &nbsp; '+(v>=0?'+':'')+v.toFixed(3)+'% in that hour';
+  }
+  flat.addEventListener('mousemove',flatHit);
+  flat.addEventListener('touchstart',function(e){ flatHit(e); e.preventDefault(); },{passive:false});
+  flat.addEventListener('touchmove',function(e){ flatHit(e); e.preventDefault(); },{passive:false});
+
+  /* ---------- table view ---------- */
+  function buildTable(){
+    if(!cells) return;
+    var grid=gridNow(), h=[], r;
+    h.push('<tr><th>Day</th>');
+    for(var hr=0;hr<HOURS;hr++) h.push('<th>'+(hr<10?'0':'')+hr+'</th>');
+    h.push('</tr>');
+    for(var day=0;day<DAYS;day++){
+      h.push('<tr><td>'+DAYNAME[day]+'</td>');
+      for(hr=0;hr<HOURS;hr++){
+        var v=grid[day*HOURS+hr];
+        h.push(v===null ? '<td>—</td>'
+          : '<td class="'+(v>=0?'u':'d')+'">'+(v>=0?'+':'')+v.toFixed(2)+'</td>');
+      }
+      h.push('</tr>');
+    }
+    document.getElementById('tbl').innerHTML=h.join('');
+  }
+
+  /* ---------- interaction ---------- */
+  var dragging=false, lx=0, ly=0;
+  function down(e){ var t=e.touches?e.touches[0]:e; dragging=true; lx=t.clientX; ly=t.clientY;
+                    spin=false; setTurn(); if(e.preventDefault) e.preventDefault(); }
+  function move(e){
+    if(!dragging) return;
+    var t=e.touches?e.touches[0]:e;
+    yaw += (t.clientX-lx)*0.010;
+    pitch = clamp(pitch + (t.clientY-ly)*0.010, -1.2, 1.2);
+    lx=t.clientX; ly=t.clientY;
+    if(e.preventDefault) e.preventDefault();
+  }
+  function up(){ dragging=false; }
+  stage.addEventListener('mousedown',down); stage.addEventListener('touchstart',down,{passive:false});
+  window.addEventListener('mousemove',move); window.addEventListener('touchmove',move,{passive:false});
+  window.addEventListener('mouseup',up);     window.addEventListener('touchend',up);
+
+  function setTurn(){ document.getElementById('bTurn').className = spin?'chip on':'chip'; }
+  document.getElementById('bTurn').addEventListener('click',function(){ spin=!spin; setTurn(); });
+  document.getElementById('bFlat').addEventListener('click',function(){
+    spin=false; setTurn(); faceOn=true; yaw=0; pitch=0; fit=0;
+  });
+  document.getElementById('bTable').addEventListener('click',function(){
+    var w=document.getElementById('tableWrap');
+    var on=w.style.display!=='block';
+    w.style.display=on?'block':'none';
+    this.className=on?'chip on':'chip';
+    if(on) buildTable();
+  });
+  function setMode(m){
+    mode=m;
+    document.getElementById('mWeek').className = m==='week'?'chip on':'chip';
+    document.getElementById('mMean').className = m==='mean'?'chip on':'chip';
+    document.getElementById('cut').disabled = (m==='mean');
+    setRampLabel(); drawFlat();
+    if(document.getElementById('tableWrap').style.display==='block') buildTable();
+  }
+  document.getElementById('mWeek').addEventListener('click',function(){ setMode('week'); });
+  document.getElementById('mMean').addEventListener('click',function(){ setMode('mean'); });
+
+  ['cut','depth','den'].forEach(function(id){
+    var el=document.getElementById(id);
+    el.addEventListener('input',function(){
+      document.getElementById('v'+id.charAt(0).toUpperCase()+id.slice(1)).textContent=el.value;
+      fit=0;
+      if(id!=='den'){ drawFlat(); if(document.getElementById('tableWrap').style.display==='block') buildTable(); }
+    });
+  });
+
+  function paintCoins(){
+    var host=document.getElementById('coins');
+    host.innerHTML='';
+    COINS.forEach(function(c){
+      var b=document.createElement('button');
+      b.className = c[0]===coin ? 'chip on' : 'chip';
+      b.textContent=c[1];
+      b.addEventListener('click',function(){ if(c[0]!==coin) load(c[0]); });
+      host.appendChild(b);
+    });
+  }
+
+  /* the legend ramp, drawn from the same function the cells use */
+  (function(){
+    var c=document.createElement('canvas'); c.width=190; c.height=11;
+    var g=c.getContext('2d'), i;
+    for(i=0;i<190;i++){
+      g.fillStyle=css(colour(((i/189)*2-1)*1));   // -scale .. +scale
+      g.fillRect(i,0,1,11);
+    }
+    document.getElementById('ramp').style.background='url('+c.toDataURL()+') center/100% 100%';
+  })();
+
+  function resize(){
+    var w=Math.max(320,Math.min(900,document.body.clientWidth-32));
+    stage.width=Math.round(w); stage.height=Math.round(w*0.62);
+    flat.width=Math.round(w);  flat.height=Math.round(clamp(w*0.34,190,320));
+    hours.width=Math.round(w); hours.height=132;
+    fit=0; drawFlat(); drawHours();
+  }
+  window.addEventListener('resize',resize);
+
+  function tick(){
+    if(spin && !dragging) yaw+=0.0035;
+    draw();
+    requestAnimationFrame(tick);
+  }
+  resize(); paintCoins(); load('bitcoin'); tick();
+})();
+</script>
+</body>
+</html>
