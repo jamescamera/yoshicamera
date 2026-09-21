@@ -18,8 +18,10 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 41 instruments. Swipe left or right (or use the
-dots) to move between them; each gets its own controls in the setup sheet.
+The rack currently holds 41 instruments. Drag the rail above the shutter to
+move between them, tap the grid at its end (or the camera's name) for all of
+them at once, and swipe the picture on the cameras that aren't using it for
+something else. Each gets its own controls in the setup sheet.
 
 | Camera | What it does |
 |---|---|
@@ -68,6 +70,44 @@ dots) to move between them; each gets its own controls in the setup sheet.
 Gamut is the founding camera and the one described in detail below; every
 other instrument is its own algorithm with its own sliders, living in the
 same file.
+
+---
+
+## Getting around 41 of them
+
+The rack began as a swipe and a row of dots, which worked at a dozen
+instruments and stopped working somewhere before forty. Three things had
+gone wrong, and they were measured rather than guessed:
+
+- **The dots could not fit.** Forty-one of them need 445px on a 390px
+  screen, so they were squeezed to nothing in the dead band between the
+  quick panel and the deck, behind the panel's own shadow.
+- **The rack in the sheet was a hunt.** 3193px of horizontal scrolling in a
+  340px window — nine and a half screens, four buttons at a time, in 9.5px
+  uppercase.
+- **The swipe fought the cameras.** Nineteen of the forty-one read a drag on
+  the picture as their own control. The flick thresholds that tried to tell
+  a swipe from a drag (110px, under 600ms, twice as horizontal as vertical)
+  cannot do it, because turning Loaf's block *is* a fast horizontal drag.
+
+So the dots' dead band now carries a **rail**: drag along it to scrub the
+rack, and it names what you are over as you go, committing when you let go
+rather than rebuilding forty cameras on the way past. Tapping the grid at
+its end — or the camera's own name, top left — opens a **launcher**: the
+same instruments as a grid of tiles, two and a half screens of vertical
+scroll instead of nine and a half of horizontal, with a name and a line on
+every one.
+
+Each tile shows that camera's **last frame**, kept as you leave it. Forty-one
+live previews is not possible; forty-one remembered ones is nearly free, so
+the grid fills in with pictures of your own room as you use it. A camera you
+have not opened yet falls back to its accent colour, or to a muted hue of
+its own where it has no accent — about half the rack shares the default
+gold, which as forty tiles is a wall of one colour.
+
+And on the nineteen cameras that want the picture, swiping it no longer
+changes camera at all. The picture belongs to the camera; the rail is how
+you leave. On the other twenty-two the swipe costs nothing, so it stays.
 
 ---
 

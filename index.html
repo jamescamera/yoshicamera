@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0C0D10">
 <title>YOSHI CAMERA — one shutter, every camera</title>
-<meta name="description" content="Thirty-one cameras that refuse to behave, on one shutter. Swipe for a new experience. Runs entirely in your browser — your camera feed never leaves your device.">
+<meta name="description" content="Forty-one cameras that refuse to behave, on one shutter. Runs entirely in your browser — your camera feed never leaves your device.">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="Yoshi Camera — thirty-one cameras, one shutter">
-<meta property="og:description" content="Thirty-one cameras that refuse to behave, on one shutter. Swipe for a new experience. Your camera feed never leaves your device.">
+<meta property="og:description" content="Forty-one cameras that refuse to behave, on one shutter. Your camera feed never leaves your device.">
 <meta property="og:image" content="share.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Yoshi Camera — thirty-one cameras, one shutter">
-<meta name="twitter:description" content="Thirty-one cameras that refuse to behave, on one shutter.">
+<meta name="twitter:description" content="Forty-one cameras that refuse to behave, on one shutter.">
 <meta name="twitter:image" content="share.png">
 <meta name="twitter:creator" content="@minted_i">
 
@@ -401,6 +401,132 @@
   #pips i{width:5px;height:5px;box-shadow:0 1px 4px rgba(0,0,0,.45);}
   #pips i.on{background:rgb(var(--accent-rgb));box-shadow:0 0 10px rgba(var(--accent-rgb),.72);}
 
+  /* ---------- the rail ----------
+     Forty-one dots needed 445px on a 390px screen, so they were squeezed to
+     nothing and sat in the dead band between the quick panel and the deck.
+     The same band now carries something that earns it: a scrubber you drag
+     to move through the rack, which is also the only way to change camera
+     on the nineteen instruments that want the picture for themselves. */
+  #rail{
+    position:fixed;z-index:34;
+    left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));
+    bottom:calc(env(safe-area-inset-bottom,0px) + 96px);
+    height:32px;display:flex;align-items:center;gap:8px;padding:0 10px;
+    border:1px solid var(--glass-line);border-radius:16px;
+    background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(15,16,21,.26));
+    box-shadow:0 8px 22px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.18);
+    -webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);
+    transition:opacity .22s,transform .28s cubic-bezier(.2,.8,.25,1);
+    touch-action:none;
+  }
+  #railTicks{
+    position:relative;flex:1 1 auto;height:100%;display:flex;align-items:center;
+    justify-content:space-between;cursor:pointer;
+  }
+  #railTicks i{
+    flex:1 1 0;height:9px;margin:0 .5px;border-radius:2px;
+    background:rgba(240,237,227,.26);
+    transition:background .18s,height .18s,box-shadow .18s;
+  }
+  #railTicks i.on{
+    height:19px;background:rgb(var(--accent-rgb));
+    box-shadow:0 0 11px rgba(var(--accent-rgb),.75);
+  }
+  #railTicks i.near{background:rgba(240,237,227,.5);height:13px;}
+  #railGrid{
+    flex:0 0 auto;width:22px;height:22px;padding:0;border:0;border-radius:7px;cursor:pointer;
+    background:rgba(255,255,255,.12);
+    display:grid;grid-template-columns:1fr 1fr;gap:2.5px;place-content:center;
+  }
+  #railGrid i{width:5px;height:5px;border-radius:1.5px;background:rgba(240,237,227,.82);}
+  #railGrid:active{background:rgba(255,255,255,.26);}
+  body.sheet-open #rail, body.launch-open #rail{opacity:0;pointer-events:none;transform:translateY(8px);}
+
+  /* the name of whatever the finger is currently over, while scrubbing */
+  #railTag{
+    position:fixed;z-index:35;left:50%;transform:translateX(-50%) translateY(6px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 134px);
+    padding:7px 13px;border-radius:14px;opacity:0;pointer-events:none;
+    border:1px solid rgba(255,255,255,.2);
+    background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(15,16,21,.44));
+    -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+    box-shadow:0 8px 22px rgba(0,0,0,.4);
+    transition:opacity .16s,transform .16s;
+    white-space:nowrap;
+  }
+  #railTag.on{opacity:1;transform:translateX(-50%) translateY(0);}
+  #railTag b{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#F4F2EC;}
+  #railTag span{font-size:10px;letter-spacing:.14em;color:rgba(244,242,236,.6);margin-left:8px;}
+
+  /* ---------- the launcher ---------- */
+  #lscrim{
+    position:fixed;inset:0;z-index:47;background:rgba(4,5,8,.55);
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+    opacity:0;visibility:hidden;transition:opacity .25s,visibility .25s;
+  }
+  #lscrim.on{opacity:1;visibility:visible;}
+  #launch{
+    position:fixed;z-index:48;
+    left:max(8px,env(safe-area-inset-left,0px));right:max(8px,env(safe-area-inset-right,0px));
+    bottom:8px;top:max(8px,calc(env(safe-area-inset-top,0px) + 8px));
+    border-radius:29px;overflow:hidden;display:flex;flex-direction:column;
+    background:linear-gradient(150deg,rgba(250,248,242,.72),rgba(219,216,210,.56));
+    border:1px solid rgba(255,255,255,.66);
+    -webkit-backdrop-filter:blur(25px) saturate(1.52);backdrop-filter:blur(25px) saturate(1.52);
+    box-shadow:0 18px 55px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.64);
+    transform:translateY(102%);opacity:0;
+    transition:transform .32s cubic-bezier(.2,.8,.25,1),opacity .2s;
+  }
+  #launch.on{transform:translateY(0);opacity:1;}
+  #launchTop{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:16px 16px 10px;
+  }
+  #launchN{
+    flex:1 1 auto;margin:0;font-size:10px;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--ink-soft);
+  }
+  #launchTop .b{flex:0 0 auto;}
+  /* the launcher is the topmost surface: a toast must not land on its
+     close button */
+  body.launch-open #toast{display:none;}
+  #launchGrid{
+    flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    display:grid;grid-template-columns:repeat(3,1fr);gap:9px;
+    /* both of these are load-bearing: without them the grid has a definite
+       height from the flex column and fits its fourteen rows into it, so
+       every tile is crushed to a third of its content and the names, which
+       are the point of a launcher, are clipped away entirely */
+    grid-auto-rows:max-content;align-content:start;
+    padding:2px 14px calc(env(safe-area-inset-bottom,0px) + 16px);
+  }
+  @media (min-width:620px){ #launchGrid{grid-template-columns:repeat(5,1fr);} }
+  @media (min-width:980px){ #launchGrid{grid-template-columns:repeat(7,1fr);} }
+  /* block layout, not flex: as flex children the picture and the caption
+     both shrank to nothing, which collapsed every row and let all fourteen
+     of them fit on one screen with no names on any of them */
+  .tile{
+    position:relative;padding:0;border:1px solid rgba(26,26,23,.2);border-radius:14px;
+    overflow:hidden;cursor:pointer;background:#111;
+    display:block;text-align:left;
+    box-shadow:0 2px 7px rgba(26,26,23,.18);
+  }
+  .tile canvas, .tile .swatch{display:block;width:100%;height:auto;aspect-ratio:3/4;}
+  .tile .swatch{background:linear-gradient(150deg,rgba(var(--tile-rgb),.9),rgba(var(--tile-rgb),.28));}
+  .tile .cap{
+    padding:6px 7px 7px;background:linear-gradient(to bottom,#FFFDF7,#DFDBD0);
+  }
+  .tile .cap b{
+    display:block;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink);
+  }
+  .tile .cap span{
+    display:block;font-size:8.5px;letter-spacing:.02em;color:var(--ink-soft);margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .tile.on{border-color:rgb(var(--accent-rgb));box-shadow:0 0 0 2px rgba(var(--accent-rgb),.6);}
+  .tile.on .cap{background:linear-gradient(to bottom,#E8C24E,var(--accent));}
+  .tile:active{transform:translateY(1px);}
+
   #deck{
     padding-left:max(18px,env(safe-area-inset-left,0px));
     padding-right:max(18px,env(safe-area-inset-right,0px));
@@ -572,7 +698,7 @@
 <div id="hud">
   <div class="stack">
     <p class="n" id="hName">—</p>
-    <p class="sub" id="hSub">swipe for a new experience</p>
+    <p class="sub" id="hSub">drag the rail, or tap for all cameras</p>
   </div>
   <span id="recDot" role="status" aria-live="polite"><i></i><span id="recTime">0:00</span></span>
 </div>
@@ -589,7 +715,11 @@
     <button id="qFlip">Flip</button>
   </div>
 </div>
-<div id="pips"></div>
+<div id="rail" aria-label="Camera rail">
+  <div id="railTicks"></div>
+  <button id="railGrid" aria-label="All cameras"><i></i><i></i><i></i><i></i></button>
+</div>
+<div id="railTag"><b id="railTagN">—</b><span id="railTagI">—</span></div>
 <div id="lens" aria-label="Lens controls"></div>
 
 <div id="deck">
@@ -646,7 +776,15 @@
   </div>
 </div>
 
-<div id="hint"><div class="harrow">&#8592;</div><div class="hlabel">Swipe for a new experience</div><div class="harrow">&#8594;</div></div>
+<div id="hint"><div class="harrow">&#8592;</div><div class="hlabel">Swipe, or drag the rail below</div><div class="harrow">&#8594;</div></div>
+<div id="lscrim"></div>
+<div id="launch" role="dialog" aria-label="All cameras">
+  <div id="launchTop">
+    <p id="launchN">—</p>
+    <button class="b" id="launchX">Close</button>
+  </div>
+  <div id="launchGrid"></div>
+</div>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="gate">
@@ -680,7 +818,11 @@
   var hSub  = document.getElementById('hSub');
   var rackEl= document.getElementById('rack');
   var ctrlEl= document.getElementById('ctrls');
-  var pipsEl= document.getElementById('pips');
+  var railEl = document.getElementById('rail');
+  var tickEl = document.getElementById('railTicks');
+  var tagEl  = document.getElementById('railTag');
+  var tagN   = document.getElementById('railTagN');
+  var tagI   = document.getElementById('railTagI');
 
   var W=0,H=0,DPR=1;
   var facing='user', stream=null, ready=false, held=false;
@@ -9765,6 +9907,7 @@
 
   function activate(i,quiet){
     i=(i+CAMS.length)%CAMS.length;
+    if(CAMS[cur] && i!==cur) grabThumb(CAMS[cur].id);   // keep what is being left
     cur=i;
     lastEffectAt=0;
     var c=CAMS[i];
@@ -9797,7 +9940,9 @@
     bindQuick();
     paintRack();
     paintPips();
-    if(!quiet) toast(c.name + ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : ''));
+    if(!quiet) toast(c.name +
+      (c.touch ? ' — drag the picture; the rail changes camera'
+               : ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : '')));
   }
 
   /* these read the difference between frames, so a still starves them */
@@ -9814,13 +9959,43 @@
       rackEl.appendChild(b);
     });
   }
+  /* one tick per instrument. At forty-one they are three pixels apart, so
+     the two either side of the current one are lifted as well — that is
+     what makes a tick you are dragging towards visible before you reach it. */
   function paintPips(){
-    pipsEl.innerHTML='';
+    tickEl.innerHTML='';
     CAMS.forEach(function(c,i){
       var d=document.createElement('i');
-      if(i===cur) d.className='on';
-      pipsEl.appendChild(d);
+      var k=Math.abs(i-cur);
+      if(k===0) d.className='on'; else if(k===1) d.className='near';
+      tickEl.appendChild(d);
     });
+  }
+
+  /* ---------- thumbnails ----------
+     Forty-one live previews is not possible; forty-one remembered ones very
+     nearly is. Each camera's last rendered frame is kept as it is left, so
+     the launcher fills in with pictures of the actual room rather than
+     stock, and anything not yet visited falls back to its accent colour. */
+  var THUMBS={};
+  function grabThumb(id){
+    try {
+      var S=sourceCanvas();
+      if(!S || !S.width || !S.height) return;
+      /* every tile is the same shape, and a canvas stretches its bitmap to
+         whatever box it is given — so the crop happens here, once, rather
+         than being asked of CSS which cannot do it for a canvas */
+      var w=150, h=200;
+      var sr=S.width/S.height, dr=w/h, sx=0, sy=0, sw=S.width, sh=S.height;
+      if(sr>dr){ sw=S.height*dr; sx=(S.width-sw)/2; } else { sh=S.width/dr; sy=(S.height-sh)/2; }
+      var t=THUMBS[id];
+      if(!t){ t=document.createElement('canvas'); t.width=w; t.height=h; }
+      var x=t.getContext('2d');
+      x.setTransform(1,0,0,1,0,0);
+      x.imageSmoothingEnabled=true;
+      x.drawImage(S, sx,sy,sw,sh, 0,0,w,h);
+      THUMBS[id]=t;
+    } catch(e){}
   }
 
   function buildControls(){
@@ -10157,6 +10332,150 @@
     qOneL.innerHTML=sp.label+' <b>'+c.v[sp.k]+'</b>';
   }
 
+  /* ---------- the rail's own gestures ----------
+     Activating on every pointer move would rebuild a camera forty times
+     across one drag, and some of them allocate real buffers to start. So a
+     scrub names what it is over and commits on release; a plain tap commits
+     at once, because there is nothing to scrub through. */
+  (function(){
+    var scrubbing=false, over=-1;
+    function idxAt(clientX){
+      var r=tickEl.getBoundingClientRect();
+      if(r.width<=0) return cur;
+      var q=(clientX-r.left)/r.width;
+      return clamp(Math.floor(q*CAMS.length),0,CAMS.length-1);
+    }
+    function showTag(i){
+      if(i===over) return;
+      over=i;
+      tagN.textContent=CAMS[i].name;
+      tagI.textContent=(i+1)+' / '+CAMS.length;
+      tagEl.className='on';
+      var kids=tickEl.getElementsByTagName('i'), j;
+      for(j=0;j<kids.length;j++){
+        var k=Math.abs(j-i);
+        kids[j].className = k===0?'on':(k===1?'near':'');
+      }
+      haptic(4);
+    }
+    function down(e){
+      var t=e.touches?e.touches[0]:e;
+      scrubbing=true; over=-1;
+      showTag(idxAt(t.clientX));
+      if(e.preventDefault) e.preventDefault();
+    }
+    function move(e){
+      if(!scrubbing) return;
+      var t=e.touches?e.touches[0]:e;
+      showTag(idxAt(t.clientX));
+      if(e.preventDefault) e.preventDefault();
+    }
+    function up(){
+      if(!scrubbing) return;
+      scrubbing=false;
+      tagEl.className='';
+      if(over>=0 && over!==cur){ hideHint(); haptic(8); activate(over); }
+      else paintPips();
+      over=-1;
+    }
+    tickEl.addEventListener('touchstart',down,{passive:false});
+    tickEl.addEventListener('touchmove',move,{passive:false});
+    tickEl.addEventListener('mousedown',down,false);
+    window.addEventListener('touchmove',move,{passive:false});
+    window.addEventListener('mousemove',move,false);
+    window.addEventListener('touchend',up,false);
+    window.addEventListener('mouseup',up,false);
+  })();
+
+  /* ---------- the launcher ----------
+     A rack of forty-one is 3200px of horizontal scrolling four buttons at a
+     time, which is hunting rather than browsing. The same instruments as a
+     grid are two screens of vertical scroll with a picture on every one. */
+  /* h,s,l -> "r,g,b" for the css custom property the tiles blend from */
+  function hslToRgbStr(h,s,l){
+    h=(h%360)/360;
+    var q=l<0.5?l*(1+s):l+s-l*s, p=2*l-q;
+    function ch(t){
+      if(t<0) t+=1; if(t>1) t-=1;
+      if(t<1/6) return p+(q-p)*6*t;
+      if(t<1/2) return q;
+      if(t<2/3) return p+(q-p)*(2/3-t)*6;
+      return p;
+    }
+    return [Math.round(ch(h+1/3)*255),Math.round(ch(h)*255),Math.round(ch(h-1/3)*255)].join(',');
+  }
+  var launchEl=document.getElementById('launch'), lscrim=document.getElementById('lscrim');
+  var launchGrid=document.getElementById('launchGrid');
+  function buildLauncher(){
+    launchGrid.innerHTML='';
+    document.getElementById('launchN').textContent=CAMS.length+' cameras';
+    CAMS.forEach(function(c,i){
+      var b=document.createElement('button');
+      b.className = i===cur ? 'tile on' : 'tile';
+      var t=THUMBS[c.id];
+      if(t){
+        var q=t.cloneNode(false);
+        q.getContext('2d').drawImage(t,0,0);
+        b.appendChild(q);
+      } else {
+        /* Only about half the rack has an accent colour of its own, and the
+           rest share the default gold — as forty tiles that is a wall of one
+           colour. A camera with no accent gets a muted hue derived from its
+           own id instead: a placeholder that keeps the grid scannable, and
+           one that is replaced by a picture of the actual room the first
+           time the camera is used. */
+        var sw=document.createElement('div');
+        sw.className='swatch';
+        var acc=ACCENTS[c.id];
+        if(acc){ sw.style.setProperty('--tile-rgb',acc[0]); }
+        else {
+          var hue=Math.floor(hash2(i*7.13,i*3.77)*360);
+          sw.style.setProperty('--tile-rgb',hslToRgbStr(hue,0.30,0.46));
+          sw.setAttribute('data-placeholder','1');
+        }
+        b.appendChild(sw);
+      }
+      var cap=document.createElement('div');
+      cap.className='cap';
+      var n=document.createElement('b'); n.textContent=c.name;
+      var l=document.createElement('span'); l.textContent=c.line;
+      cap.appendChild(n); cap.appendChild(l);
+      b.appendChild(cap);
+      b.addEventListener('click',function(){
+        hideHint();
+        openLauncher(false);
+        if(i!==cur) activate(i);
+      });
+      launchGrid.appendChild(b);
+    });
+  }
+  function openLauncher(v2){
+    if(v2){
+      openSheet(false);              // two stacked panels is one too many
+      grabThumb(CAMS[cur].id);       // the one you are on, as it is right now
+      buildLauncher();
+      var on=launchGrid.getElementsByClassName('on')[0];
+      if(on) setTimeout(function(){ try{ on.scrollIntoView({block:'center'}); }catch(e){} },0);
+    }
+    launchEl.className=v2?'on':'';
+    lscrim.className=v2?'on':'';
+    document.body.classList.toggle('launch-open',!!v2);
+  }
+  document.getElementById('railGrid').addEventListener('click',function(e){
+    e.stopPropagation(); openLauncher(true);
+  });
+  document.getElementById('launchX').addEventListener('click',function(){ openLauncher(false); });
+  lscrim.addEventListener('click',function(){ openLauncher(false); });
+  /* the camera's own name is the other way in — tapping what you are using
+     to see everything else you could be using needs no explaining */
+  (function(){
+    var st=document.querySelector('#hud .stack');
+    if(!st) return;
+    st.style.pointerEvents='auto';
+    st.style.cursor='pointer';
+    st.addEventListener('click',function(){ openLauncher(true); });
+  })();
+
   var peekT=null;
   function peek(on){
     if(on){
@@ -10183,7 +10502,8 @@
     function uiTarget(t){
       while(t && t!==document.body){
         var id=t.id;
-        if(id==='sheet'||id==='deck'||id==='quick'||id==='nav'||id==='scrim'||id==='rack') return true;
+        if(id==='sheet'||id==='deck'||id==='quick'||id==='nav'||id==='scrim'||id==='rack'||
+           id==='rail'||id==='launch'||id==='lscrim') return true;
         t=t.parentNode;
       }
       return false;
@@ -10217,7 +10537,14 @@
       var t=e.changedTouches?e.changedTouches[0]:e;
       var dx=t.clientX-x0, dy=t.clientY-y0, dt=now()-t0;
       // a deliberate flick still changes camera, even on a camera you can drag
-      if(dt<600 && Math.abs(dx)>110 && Math.abs(dx)>Math.abs(dy)*2.2){
+      /* Nineteen of the instruments read a drag on the picture as their own
+         control, and a swipe laid over the top of that is a coin toss: the
+         flick thresholds below were an attempt to tell them apart and they
+         cannot, because turning Loaf's block IS a fast horizontal drag. On
+         those cameras the picture belongs to the camera and the rail is how
+         you leave. On the rest the swipe costs nothing, so it stays. */
+      if(!(CAMS[cur] && CAMS[cur].touch) &&
+         dt<600 && Math.abs(dx)>110 && Math.abs(dx)>Math.abs(dy)*2.2){
         lastSwitch=now();
         hideHint();
         haptic(8);
@@ -12408,7 +12735,7 @@
       bPhoto.textContent = on ? (PHOTO.kind()==='video' ? 'Change video' : 'Change photo') : 'Use a photo or video';
       bPhoto.className   = on ? 'b on' : 'b';
       bLive.style.display = on ? '' : 'none';
-      hSub.textContent = on ? PHOTO.label() : 'swipe for a new experience';
+      hSub.textContent = on ? PHOTO.label() : 'drag the rail, or tap for all cameras';
       syncVidUI();
     }
 
@@ -12541,8 +12868,7 @@
 
   (function(){
     var g=document.getElementById('gateLine');
-    if(g) g.textContent = CAMS.length + ' cameras that refuse to behave, on one shutter. ' +
-      'Swipe for a new experience.';
+    if(g) g.textContent = CAMS.length + ' cameras that refuse to behave, on one shutter.';
   })();
 
   document.addEventListener('visibilitychange', function(){
