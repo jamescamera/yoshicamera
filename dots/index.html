@@ -289,6 +289,8 @@
     transition:background .16s,border-color .16s,color .16s,box-shadow .16s;
   }
   .seg.wrap{grid-auto-flow:row;grid-template-columns:repeat(3,1fr);gap:2px}
+  /* a lone button on the last row stretches, rather than leaving two gaps */
+  .seg.wrap button:last-child:nth-child(3n+1){grid-column:1/-1}
   #emojiPicks button{font-size:1.15rem;line-height:1}
   #emojiPicks button[data-emoji=""]{font-size:.875rem}
   #emoji{
@@ -478,6 +480,7 @@
             <button type="button" data-punch="hexagon" aria-pressed="false">Hex</button>
             <button type="button" data-punch="triangle" aria-pressed="false">Triangle</button>
             <button type="button" data-punch="star" aria-pressed="false">Star</button>
+            <button type="button" data-punch="heart" aria-pressed="false">Heart</button>
           </div>
         </div>
       </section>
@@ -1405,7 +1408,8 @@
     diamond:  { sides:4, turn:0,           grow:1.2533 },
     hexagon:  { sides:6, turn:0,           grow:1.0997 },
     triangle: { sides:3, turn:-Math.PI/2,  grow:1.30   },
-    star:     { points:5, turn:-Math.PI/2, grow:1.42, waist:0.42 }
+    star:     { points:5, turn:-Math.PI/2, grow:1.42, waist:0.42 },
+    heart:    { heart:true, turn:0,        grow:1.22 }
   };
   function die(){ return DIES[state.punch] || DIES.circle; }
 
@@ -1417,9 +1421,24 @@
     return (h - Math.floor(h) - 0.5)*0.5;
   }
 
+  // The usual parametric heart, centred on its own box and scaled so its
+  // furthest point sits at R, like the circumradius of the polygons.
+  function heartPath(c, x, y, R, turn){
+    var N = 44, k = R/18.2265, ca = Math.cos(turn), sa = Math.sin(turn);
+    for (var i=0;i<N;i++){
+      var t = i/N*Math.PI*2, st = Math.sin(t);
+      var hx = 16*st*st*st;
+      var hy = -(13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t)) - 2.5;
+      var px = x + (hx*ca - hy*sa)*k, py = y + (hx*sa + hy*ca)*k;
+      if (i) c.lineTo(px,py); else c.moveTo(px,py);
+    }
+    c.closePath();
+  }
+
   function punchPath(c, x, y, r, u, v){
     var d = die();
     c.beginPath();
+    if (d.heart){ heartPath(c, x, y, r*d.grow, d.turn + punchTurn(u,v)); return; }
     if (!d.sides && !d.points){ c.arc(x, y, r, 0, Math.PI*2); return; }
     var R = r*d.grow, a0 = d.turn + punchTurn(u,v);
     var n = d.points ? d.points*2 : d.sides;
