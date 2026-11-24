@@ -399,8 +399,18 @@ it. The type chart does all the drawing. Here the types are read off the
 picture rather than invented: each cell's colour is sorted by hue into a few
 **factions**, and the chart is the colour wheel itself — a faction beats the
 ones just ahead of it round the wheel and loses to the ones just behind, so
-no faction is strongest and the war never settles. Greys have no hue to fight
-with, so they either stand as walls or get taken by everyone.
+no faction is strongest and the war never settles. Shadows and highlights
+have no hue to fight with, so they are two sides of their own that either
+stand as walls or get taken by everyone. They started as one grey, and a
+black ball on a white wall came out as a single flat patch.
+
+Each side's colour is then lit the way the room is lit at that cell. Drawn
+flat, a side kept only the outline of a shape and threw away everything
+inside it; relit, the war reads as a map laid over a scene that keeps its
+form, and a colour that invades takes on the light of the ground it took.
+The neutral thresholds are kept low for the same reason: the dark side of a
+red ball is still red, and handing it to the shadows cut every lit object in
+half.
 
 Left alone, that forgets the room within a couple of seconds. Topping cells
 back up from the camera at random didn't fix it: a lone cell put back in the

@@ -9822,13 +9822,13 @@
      quietly goes home. Anything that moves repaints what it crosses —
      so the scene stays standing and the fighting happens at its edges,
      with every border between two colours slowly deciding which of them
-     it belongs to. Greys have no hue to fight with: either they stand as
-     walls nobody can take, or every colour takes them. */
+     it belongs to. Shadows and highlights have no hue to fight with:
+     either they stand as walls nobody can take, or every colour takes them. */
   (function(){
     var small=mk(), out=mk(), img=null, gw=2, gh=2, NC=0;
-    var A=null, B=null, camT=null, prevL=null, ADV=null, T=1, NF=6, primed=false;
+    var A=null, B=null, camT=null, prevL=null, ADV=null, T=1, NF=8, SH=8, HI=9, primed=false;
     var mean=null, seed=0x9e3779b9|0, lastDraw=0;
-    var v={ factions:6, grain:140, fury:35, hold:50, luck:12, pace:2, grey:'wall', palette:'room', borders:'ink' };
+    var v={ factions:8, grain:140, fury:35, hold:50, luck:12, pace:2, shade:75, grey:'wall', palette:'room', borders:'ink' };
 
     function rnd(){ seed^=seed<<13; seed^=seed>>>17; seed^=seed<<5; return (seed>>>0)/4294967296; }
     function rows(){ return SLOW_DEVICE ? Math.min(v.grain,LOW_MEMORY?110:150) : v.grain; }
@@ -9838,13 +9838,19 @@
        directly opposite is a stand-off. Same scale as the shader's: a win
        is +1.5, a loss -1.5, and an attack takes the cell above 0.5. */
     function chart(){
-      NF=Math.round(v.factions); T=NF+1;
+      /* two sides with no hue at all after the colours: shadows and
+         highlights. They were one grey once, and a black ball on a white
+         wall came out as one flat grey patch — the two ends of the light
+         are as different as any two colours, so they get a side each. */
+      NF=Math.round(v.factions); SH=NF; HI=NF+1; T=NF+2;
       ADV=new Float32Array(T*T);
-      var k=Math.floor((NF-1)/2), a, d, diff, grey=NF;
+      var k=Math.floor((NF-1)/2), a, d, diff, an, dn;
       for(a=0;a<T;a++) for(d=0;d<T;d++){
         var s=0;
-        if(a===grey||d===grey){
-          if(v.grey==='prey' && a!==d) s = d===grey ? 1.5 : -1.5;
+        an=a>=NF; dn=d>=NF;
+        if(an||dn){
+          // shadow against highlight is a stand-off; colour takes either, if greys are prey
+          if(v.grey==='prey' && an!==dn) s = dn ? 1.5 : -1.5;
         } else {
           diff=(d-a+NF)%NF;
           if(diff>0 && diff<=k) s=1.5;
@@ -9854,7 +9860,8 @@
       }
       mean=new Float32Array(T*3);
       for(a=0;a<NF;a++) boldInto(a,mean,a*3);
-      mean[grey*3]=mean[grey*3+1]=mean[grey*3+2]=128;
+      mean[SH*3]=mean[SH*3+1]=mean[SH*3+2]=40;
+      mean[HI*3]=mean[HI*3+1]=mean[HI*3+2]=215;
     }
     function build(){
       gh=Math.max(24,Math.round(rows()));
@@ -9880,14 +9887,17 @@
     function boldInto(f,dst,o){ hsl(f/NF,.82,.54,o,dst); }
 
     /* a cell's faction from its colour: a hue sector, centred so the first
-       one sits on red — or grey, if there is too little colour to say */
+       one sits on red — or shadow or highlight, if there is too little colour to say */
     function classify(s){
-      var i, o, r, g, b, mx, mn, ch, h, f, grey=NF;
+      var i, o, r, g, b, mx, mn, ch, h, f;
       var sums=new Float32Array(T*4);
       for(i=0;i<NC;i++){
         o=i*4; r=s[o]; g=s[o+1]; b=s[o+2];
         mx=r>g?(r>b?r:b):(g>b?g:b); mn=r<g?(r<b?r:b):(g<b?g:b); ch=mx-mn;
-        if(ch<26 || mx<34 || ch<mx*0.16) f=grey;
+        /* the thresholds are low on purpose: the dark side of a red ball is
+           still red, and handing it to the shadows cut every lit object in
+           half. Only light with almost no colour left in it goes neutral. */
+        if(ch<18 || mx<26 || ch<mx*0.14) f = (r+g+g+b)<4*118 ? SH : HI;
         else {
           if(mx===r) h=((g-b)/ch+6)%6; else if(mx===g) h=(b-r)/ch+2; else h=(r-g)/ch+4;
           f=Math.floor((h/6+0.5/NF)*NF)%NF;
@@ -9902,7 +9912,7 @@
         var n=sums[f*4+3];
         if(n<4) continue;
         r=sums[f*4]/n; g=sums[f*4+1]/n; b=sums[f*4+2]/n;
-        var l=(r+g+b)/3, push=f===grey?0:0.45;
+        var l=(r+g+b)/3, push=f>=NF?0:0.45;
         r=clamp(r+(r-l)*push,0,255); g=clamp(g+(g-l)*push,0,255); b=clamp(b+(b-l)*push,0,255);
         o=f*3;
         mean[o]+=(r-mean[o])*0.2; mean[o+1]+=(g-mean[o+1])*0.2; mean[o+2]+=(b-mean[o+2])*0.2;
@@ -9948,7 +9958,8 @@
                [0.44,'teals'],[0.5,'cyans'],[0.58,'blues'],[0.72,'violets'],[0.8,'magentas'],
                [0.9,'pinks'],[0.96,'reds']];
     function nameOf(f){
-      if(f===NF) return 'greys';
+      if(f===SH) return 'shadows';
+      if(f===HI) return 'highlights';
       var h=f/NF, best=NAMES[0][1], bd=9;
       for(var j=0;j<NAMES.length;j++){ var d=Math.abs(NAMES[j][0]-h); if(d<bd){ bd=d; best=NAMES[j][1]; } }
       return best;
@@ -9956,16 +9967,17 @@
 
     reg({
       id:'turf', name:'Turf', line:'The colours in the room, at war',
-      note:'Every patch of colour is a faction, and the colour wheel is the type chart: each faction beats the ones just ahead of it round the wheel and loses to the ones just behind, so none of them is strongest and the war never ends. Each cell is attacked by two of its neighbours every round and takes the colour of any that wins; Fury is how many of those attacks are actually made. Hold is home advantage: ground still held by the colour the camera sees there is harder to take, and lost ground is won back from the ground around it that held — past the middle of the slider the room wins, below it the war does. Anything that moves repaints what it crosses — so the scene stays standing and the fighting happens along its borders. Luck lets a losing attack win now and again. Greys either stand as walls or get eaten by everyone.',
+      note:'Every patch of colour is a faction, and the colour wheel is the type chart: each faction beats the ones just ahead of it round the wheel and loses to the ones just behind, so none of them is strongest and the war never ends. Each cell is attacked by two of its neighbours every round and takes the colour of any that wins; Fury is how many of those attacks are actually made. Hold is home advantage: ground still held by the colour the camera sees there is harder to take, and lost ground is won back from the ground around it that held — past the middle of the slider the room wins, below it the war does. Anything that moves repaints what it crosses — so the scene stays standing and the fighting happens along its borders. Luck lets a losing attack win now and again. Shadows and highlights are two sides of their own with no colour to fight with: they either stand as walls or get eaten by everyone. Shading lights each side’s colour the way the room is lit, so shapes keep their form under the war.',
       v:v,
       ctrl:[
         {t:'seg',k:'palette',label:'Colours',opts:[['room','The room’s'],['bold','Flags']]},
-        {t:'seg',k:'grey',label:'Greys',opts:[['wall','Hold out'],['prey','Are taken']],rebuild:true},
+        {t:'seg',k:'grey',label:'Shadows & lights',opts:[['wall','Hold out'],['prey','Are taken']],rebuild:true},
         {t:'seg',k:'borders',label:'Fronts',opts:[['ink','Inked'],['none','Bare']]},
         {t:'sld',k:'factions',label:'Factions',min:3,max:12,rebuild:true},
         {t:'sld',k:'fury',label:'Fury',min:0,max:100},
         {t:'sld',k:'hold',label:'Hold',min:0,max:100},
         {t:'sld',k:'luck',label:'Luck',min:0,max:100},
+        {t:'sld',k:'shade',label:'Shading',min:0,max:100},
         {t:'sld',k:'pace',label:'Pace',min:1,max:6},
         {t:'sld',k:'grain',label:'Grain',min:60,max:240,step:10,rebuild:true}
       ],
@@ -10010,12 +10022,29 @@
 
         var d=img.data, bold=v.palette==='bold', ink=v.borders==='ink', x, y, c, dark;
         var count=new Int32Array(T), pal=bold?new Float32Array(T*3):mean;
-        if(bold){ for(f=0;f<NF;f++) boldInto(f,pal,f*3); pal[NF*3]=pal[NF*3+1]=pal[NF*3+2]=34; }
+        if(bold){
+          for(f=0;f<NF;f++) boldInto(f,pal,f*3);
+          pal[SH*3]=pal[SH*3+1]=pal[SH*3+2]=30; pal[HI*3]=pal[HI*3+1]=pal[HI*3+2]=228;
+        }
+        /* Shading: a side's colour, lit the way the room is lit at that cell.
+           A flat colour per side throws away everything inside a shape and
+           leaves only its outline; relit, the war reads as a map laid over a
+           scene that keeps its form, and a colour that invades takes on the
+           light of the ground it took. Darker than the side's own colour
+           scales it down; lighter lifts it toward white. */
+        var sh=v.shade/100, pl=new Float32Array(T), r0, g0, b0, q, L, m;
+        for(f=0;f<T;f++) pl[f]=Math.max(8,0.2126*pal[f*3]+0.7152*pal[f*3+1]+0.0722*pal[f*3+2]);
         for(y=0;y<gh;y++) for(x=0;x<gw;x++){
           i=y*gw+x; f=A[i]; count[f]++;
           c=f*3; o=i*4;
+          r0=pal[c]; g0=pal[c+1]; b0=pal[c+2];
+          if(sh>0){
+            L=prevL[i]; m=pl[f];
+            if(L<=m){ q=1+(L/m-1)*sh; r0*=q; g0*=q; b0*=q; }
+            else { q=sh*(L-m)/Math.max(1,255-m); r0+=(255-r0)*q; g0+=(255-g0)*q; b0+=(255-b0)*q; }
+          }
           dark = ink && ((x+1<gw && A[i+1]!==f) || (y+1<gh && A[i+gw]!==f)) ? 0.55 : 1;
-          d[o]=pal[c]*dark; d[o+1]=pal[c+1]*dark; d[o+2]=pal[c+2]*dark; d[o+3]=255;
+          d[o]=r0*dark; d[o+1]=g0*dark; d[o+2]=b0*dark; d[o+3]=255;
         }
         out.x.putImageData(img,0,0);
         ctx.setTransform(1,0,0,1,0,0);
