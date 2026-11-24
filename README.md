@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 41 instruments. Drag the rail above the shutter to
+The rack currently holds 42 instruments. Drag the rail above the shutter to
 move between them, tap the grid at its end (or the camera's name) for all of
 them at once, and swipe the picture on the cameras that aren't using it for
 something else. Each gets its own controls in the setup sheet.
@@ -64,6 +64,7 @@ something else. Each gets its own controls in the setup sheet.
 | Stitch | The present, punched out of the past |
 | Pareidolia | Whatever was nearly there |
 | Loaf | The last few seconds, as a solid |
+| Turf | The colours in the room, at war |
 | Ink → VHS | A stacked-effect prototype |
 | Mosaic → Rain | A stacked-effect prototype |
 
@@ -391,7 +392,28 @@ does nothing at all until its last few percent. A frame picked out of a
 carved block comes away as a cut-out of just what was moving at that
 instant.
 
-The other 40 cameras each implement their own transform the same way —
+Turf is after a small shader on [smoothstep.io](https://smoothstep.io) in
+which a grid of creature types fights itself: every cell picks a neighbour,
+and the one opposite it, at random, and takes the type of either that beats
+it. The type chart does all the drawing. Here the types are read off the
+picture rather than invented: each cell's colour is sorted by hue into a few
+**factions**, and the chart is the colour wheel itself — a faction beats the
+ones just ahead of it round the wheel and loses to the ones just behind, so
+no faction is strongest and the war never settles. Greys have no hue to fight
+with, so they either stand as walls or get taken by everyone.
+
+Left alone, that forgets the room within a couple of seconds. Topping cells
+back up from the camera at random didn't fix it: a lone cell put back in the
+middle of occupied ground is eaten the next round, so the scene came back as
+static rather than as territory. What works is **home ground**. A cell still
+held by the colour the camera sees there is harder to take, and a neighbour
+flying that colour takes it back whatever the chart says. Lost ground is
+then recovered as a front, the same way it was lost. Hold trades the two
+off, and its middle is the tipping point: below it an invasion gains ground,
+above it the room pushes the invasion back out, and in between the fronts
+wander. Anything that moves repaints the cells it crosses.
+
+The other 41 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 

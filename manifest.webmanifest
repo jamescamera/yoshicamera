@@ -1,7 +1,7 @@
 {
   "name": "Yoshi Camera",
   "short_name": "Yoshi",
-  "description": "Forty cameras on one shutter. Nothing you point them at leaves your phone.",
+  "description": "Forty-two cameras on one shutter. Nothing you point them at leaves your phone.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
