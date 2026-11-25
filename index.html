@@ -221,6 +221,7 @@
   #hw .qchips button.on{background:linear-gradient(to bottom,#E8C24E,var(--accent));color:var(--void);}
   #camName{font-size:15px;font-weight:700;letter-spacing:.03em;margin:8px 0 2px;}
   #camLine{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 4px;}
+  #ctlTools{margin:6px 0 2px;}
   .hr{height:1px;background:var(--rule);margin:12px 0 0;}
 
   .row{display:flex;gap:5px;flex-wrap:wrap;}
@@ -379,9 +380,9 @@
   .qrow{gap:16px;margin-bottom:7px;}
   .qs{background:transparent;padding:1px 3px 0;}
   .qs label{font-weight:600;text-shadow:0 1px 5px rgba(0,0,0,.6);}
-  .qchips{gap:7px;}
+  .qchips{gap:6px;}
   .qchips button{
-    min-height:38px;padding:8px 13px;border-radius:19px;
+    min-height:38px;padding:8px 10px;border-radius:19px;white-space:nowrap;
     background:linear-gradient(155deg,rgba(255,255,255,.18),rgba(16,17,22,.34));
     border:1px solid rgba(255,255,255,.2);
     box-shadow:0 4px 11px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.18);
@@ -651,6 +652,7 @@
   }
 
   body.sheet-open #quick{opacity:0;transform:translateY(10px);pointer-events:none;}
+  @media (max-width:374px){ .qchips{gap:4px;} .qchips button{padding:8px 7px;letter-spacing:.07em;} }
   body.camera-pop #hud .stack{animation:cameraPop .28s cubic-bezier(.2,.8,.25,1);}
   @keyframes cameraPop{0%{opacity:.2;transform:translateY(-5px) scale(.97)}100%{opacity:1;transform:none}}
 
@@ -705,6 +707,7 @@
     <button id="qAspect">Screen</button>
     <button id="qHold">Hold</button>
     <button id="qFlip">Flip</button>
+    <button id="qDice" aria-label="Roll this camera's settings">Dice</button>
   </div>
 </div>
 <div id="rail" aria-label="Camera rail">
@@ -726,6 +729,10 @@
   <div id="rack"></div>
   <p id="camName">—</p>
   <p id="camLine">—</p>
+  <div class="row" id="ctlTools">
+    <button class="b" id="bDice">Roll the dice</button>
+    <button class="b" id="bReset">Defaults</button>
+  </div>
   <div id="ctrls"></div>
   <div class="hr"></div>
   <p class="seclabel">Lens</p>
@@ -5195,7 +5202,7 @@
         }
         ctx.setTransform(1,0,0,1,0,0); ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1; ctx.fillStyle=bg; ctx.fillRect(0,0,SW,SH); var cw=SW/boardW, ch=SH/boardH;
         for(j=0;j<boardH;j++) for(i=0;i<boardW;i++){ idx=j*boardW+i; var a=ageA[idx]; if(a<=0.01) continue; var rr=Math.max(0,Math.min(255,colR[idx]|0)), gg=Math.max(0,Math.min(255,colG[idx]|0)), bb=Math.max(0,Math.min(255,colB[idx]|0)); ctx.globalAlpha=Math.min(1, stateA[idx] ? (.24+a*.92) : a*.22); ctx.fillStyle='rgb('+rr+','+gg+','+bb+')'; ctx.fillRect(i*cw,j*ch,Math.ceil(cw)+.2,Math.ceil(ch)+.2); }
-        if(glow>0.01 && 'filter' in ctx && !SLOW_DEVICE){ ctx.save(); ctx.globalCompositeOperation='screen'; ctx.globalAlpha=.06+glow*.24; ctx.filter='blur('+Math.round(2+glow*14)+'px)'; ctx.drawImage(canvas,0,0); ctx.restore(); }
+        if(glow>0.01 && 'filter' in ctx && !SLOW_DEVICE){ ctx.save(); ctx.globalCompositeOperation='screen'; ctx.globalAlpha=.06+glow*.24; ctx.filter='blur('+Math.round(2+glow*14)+'px)'; ctx.drawImage(stage,0,0); ctx.restore(); }
         ctx.globalAlpha=.08; ctx.strokeStyle='rgba(255,255,255,.08)'; for(i=1;i<boardW;i++){ ctx.beginPath(); ctx.moveTo(i*cw,0); ctx.lineTo(i*cw,SH); ctx.stroke(); } for(j=1;j<boardH;j++){ ctx.beginPath(); ctx.moveTo(0,j*ch); ctx.lineTo(SW,j*ch); ctx.stroke(); } ctx.globalAlpha=1; var aliveCount=0; for(i=0;i<N;i++) aliveCount+=stateA[i]?1:0; hSub.textContent=commas(aliveCount)+' live cells · '+v.rule+' · '+v.seed+(SLOW_DEVICE?' · mobile safe':'');
       }
     });
@@ -10129,6 +10136,98 @@
   CAMS = CAMS.filter(function(c){ return OFF.indexOf(c.id)<0; });
 
   var cur=0, camReady={};
+
+  /* ---------- memory between visits ----------
+     Every visit used to start at Gamut on its defaults, and the launcher's
+     pictures of the room vanished with the tab. This keeps the last camera,
+     the mix, every setting that was moved, and the launcher's last frames —
+     in this browser's own storage, on this phone, and nowhere else.
+
+     Only settings that differ from a camera's default are kept, so when a
+     default is improved later everyone who never touched it gets the new
+     one. Anything read back is checked against the control it belongs to —
+     a slider's range, a segment's options — so a stale or damaged entry is
+     ignored rather than trusted. */
+  var STORE=(function(){
+    var KEY='yoshi.state.v1', TKEY='yoshi.thumbs.v1', saveT=null, thumbT=null, thumbQ={};
+    /* defaults are keyed by the settings object, not the camera: the stacked
+       prototypes borrow their second camera's settings, so they must share
+       its defaults too, or Defaults on a stack would blank that camera */
+    var DEF=(typeof WeakMap!=='undefined') ? new WeakMap() : null, DEFO={};
+    function get(k){ try { var s=localStorage.getItem(k); return s?JSON.parse(s):null; } catch(e){ return null; } }
+    function put(k,o){ try { localStorage.setItem(k,JSON.stringify(o)); return true; } catch(e){ return false; } }
+    function ok(sp,val){
+      if(sp.t==='sld') return typeof val==='number' && isFinite(val) && val>=sp.min && val<=sp.max;
+      if(sp.t==='seg') return sp.opts.some(function(o){ return o[0]===val; });
+      return false;
+    }
+    function defaults(c){
+      var d=DEF ? DEF.get(c.v) : DEFO[c.id];
+      if(!d){ d={}; if(DEF) DEF.set(c.v,d); else DEFO[c.id]=d; }
+      (c.ctrl||[]).forEach(function(sp){ if(!(sp.k in d)) d[sp.k]=c.v[sp.k]; });
+      return d;
+    }
+    function restore(){
+      CAMS.forEach(defaults);
+      var st=get(KEY); if(!st) return;
+      if(st.v) CAMS.forEach(function(c){
+        var o=st.v[c.id]; if(!o) return;
+        (c.ctrl||[]).forEach(function(sp){ if(sp.k in o && ok(sp,o[sp.k])) c.v[sp.k]=o[sp.k]; });
+      });
+      if(st.cam) for(var i=0;i<CAMS.length;i++) if(CAMS[i].id===st.cam){ cur=i; break; }
+    }
+    function write(){
+      saveT=null;
+      var st={ cam:CAMS[cur]?CAMS[cur].id:null, mix:quickMix, v:{} };
+      var seen=[];
+      CAMS.forEach(function(c){
+        if(seen.indexOf(c.v)>=0) return;     // a stack's settings are its second camera's, saved there
+        seen.push(c.v);
+        var d=defaults(c), o=null;
+        (c.ctrl||[]).forEach(function(sp){ if(c.v[sp.k]!==d[sp.k] && c.v[sp.k]!==undefined){ o=o||{}; o[sp.k]=c.v[sp.k]; } });
+        if(o) st.v[c.id]=o;
+      });
+      put(KEY,st);
+    }
+    function save(){ if(!saveT) saveT=setTimeout(write,400); }
+    function flush(){ if(saveT){ clearTimeout(saveT); } write(); if(thumbT){ clearTimeout(thumbT); thumbT=null; writeThumbs(); } }
+    function mix(){
+      var st=get(KEY), m=(st && typeof st.mix==='number' && isFinite(st.mix)) ? clamp(Math.round(st.mix),0,100) : 100;
+      var qm=document.getElementById('qMix'), qv=document.getElementById('qMixV');
+      if(qm) qm.value=m; if(qv) qv.textContent=m;
+      return m;
+    }
+    function reset(c){ var d=defaults(c); (c.ctrl||[]).forEach(function(sp){ if(sp.k in d && d[sp.k]!==undefined) c.v[sp.k]=d[sp.k]; }); save(); }
+    /* a launcher tile is 150x200; as a JPEG that is a few kilobytes, so all
+       of them together are well inside what a browser lets a page keep */
+    function thumb(id,cv){
+      thumbQ[id]=cv;
+      if(thumbT) return;
+      thumbT=setTimeout(function(){ thumbT=null; writeThumbs(); },1200);
+    }
+    function writeThumbs(){
+      var all=get(TKEY)||{}, k;
+      for(k in thumbQ){ try { all[k]=thumbQ[k].toDataURL('image/jpeg',0.72); } catch(e){} }
+      thumbQ={};
+      if(!put(TKEY,all)){ try { localStorage.removeItem(TKEY); } catch(e){} }
+    }
+    function loadThumbs(into){
+      var all=get(TKEY); if(!all) return;
+      Object.keys(all).forEach(function(id){
+        if(typeof all[id]!=='string' || all[id].indexOf('data:image/jpeg')!==0) return;
+        var im=new Image();
+        im.onload=function(){
+          if(into[id]) return;               // a fresh frame from this visit wins
+          var t=document.createElement('canvas'); t.width=150; t.height=200;
+          t.getContext('2d').drawImage(im,0,0,150,200);
+          into[id]=t;
+        };
+        im.src=all[id];
+      });
+    }
+    return { restore:restore, save:save, flush:flush, mix:mix, reset:reset, defaults:defaults, ok:ok, thumb:thumb, loadThumbs:loadThumbs };
+  })();
+  STORE.restore();
   var ACCENTS={
     gamut:['201,162,39','#0C0D10'], infinite:['88,117,255','#080A16'], ink:['178,121,59','#11100D'],
     rain:['53,224,122','#05070A'], mosaic:['255,132,48','#12100D'], fold:['74,91,180','#0D0B0A'],
@@ -10192,6 +10291,7 @@
     bindQuick();
     paintRack();
     paintPips();
+    STORE.save();
     if(!quiet) toast(c.name +
       (c.touch ? ' — drag the picture; the rail changes camera'
                : ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : '')));
@@ -10230,6 +10330,7 @@
      the launcher fills in with pictures of the actual room rather than
      stock, and anything not yet visited falls back to its accent colour. */
   var THUMBS={};
+  STORE.loadThumbs(THUMBS);
   function grabThumb(id){
     try {
       var S=sourceCanvas();
@@ -10247,6 +10348,7 @@
       x.imageSmoothingEnabled=true;
       x.drawImage(S, sx,sy,sw,sh, 0,0,w,h);
       THUMBS[id]=t;
+      STORE.thumb(id,t);
     } catch(e){}
   }
 
@@ -10277,6 +10379,7 @@
             c.v[spec.k]=o[0];
             if(spec.rebuild && c.size) c.size();
             glimpse();
+            STORE.save();
           });
           seg.appendChild(b);
         });
@@ -10298,6 +10401,7 @@
           if(spec.k===qOneKey){ qOne.value=s.value; qOneL.innerHTML=spec.label+' <b>'+s.value+'</b>'; }
           c.v[spec.k]=parseInt(s.value,10);
           bb.textContent=c.v[spec.k];
+          STORE.save();
           if(spec.rebuild && c.size){
             if(t) cancelAnimationFrame(t);
             t=requestAnimationFrame(function(){ c.size(); glimpse(); });
@@ -10554,6 +10658,7 @@
     qm.addEventListener('input', function(){
       quickMix=parseInt(qm.value,10);
       qv.textContent=quickMix;
+      STORE.save();
     });
   })();
 
@@ -10562,6 +10667,7 @@
     var c=CAMS[cur];
     c.v[qOneKey]=parseInt(qOne.value,10);
     qOneL.innerHTML=qOneSpec.label+' <b>'+c.v[qOneKey]+'</b>';
+    STORE.save();
     if(sheetInputs[qOneKey]){
       sheetInputs[qOneKey].i.value=c.v[qOneKey];
       sheetInputs[qOneKey].b.textContent=c.v[qOneKey];
@@ -10816,6 +10922,25 @@
   /* a phone screen is 9:16 and a photograph is not, so in photo mode the two
      canvases are letterboxed to the file's shape. Everything downstream reads
      clientWidth/Height, so nothing else has to know about it. */
+  /* the clear band between the name pill at the top and whatever sits
+     along the bottom — the quick panel when it is showing, otherwise the
+     rail or the shutter deck. (These are all position:fixed, which has no
+     offsetParent, so visibility is asked of the computed style instead.) */
+  function shown(el){ return !!el && getComputedStyle(el).display!=='none' && el.getBoundingClientRect().height>0; }
+  function controlsTop(vh){
+    var ids=['quick','rail','deck'], i, el, r, t=vh;
+    for(i=0;i<ids.length;i++){
+      el=document.getElementById(ids[i]);
+      if(!shown(el)) continue;
+      r=el.getBoundingClientRect();
+      if(r.top>0 && r.top<t) t=r.top;
+    }
+    return t-8;
+  }
+  function hudBottom(){
+    var el=document.getElementById('hud');
+    return shown(el) ? el.getBoundingClientRect().bottom+6 : 0;
+  }
   function layoutStage(){
     var a=stage.style, b=glc.style, i;
     var mv=document.getElementById('maskv');
@@ -10826,12 +10951,29 @@
       return;
     }
     var vw=window.innerWidth||stage.clientWidth, vh=window.innerHeight||stage.clientHeight;
-    var ar=PHOTO.w()/PHOTO.h(), cw, ch;
+    var ar=PHOTO.w()/PHOTO.h(), cw, ch, top;
     if(vw/vh>ar){ ch=vh; cw=vh*ar; } else { cw=vw; ch=vw/ar; }
+    top=(vh-ch)/2;
+    /* Centred on the whole screen, a landscape file sat low with an empty
+       band above it and the quick panel over its bottom third. So it is
+       centred in the clear space above the controls instead — as long as
+       that costs it less than a fifth of its size. A tall file, which would
+       have to shrink further than that, keeps the whole screen and lets the
+       glass panels float over it, as the live picture does. */
+    var top0=controlsTop(vh);
+    if(top0>vh*0.4){
+      var bw=cw, bh=ch;
+      if(bh>top0){ bh=top0; bw=bh*ar; }
+      if(bw*bh>=cw*ch*0.8){
+        cw=bw; ch=bh;
+        var hb=hudBottom();
+        top = ch<=top0-hb ? hb+(top0-hb-ch)/2 : (top0-ch)/2;
+      }
+    }
     cw=Math.round(cw); ch=Math.round(ch);
     a.width=b.width=cw+'px';  a.height=b.height=ch+'px';
     a.left=b.left=Math.round((vw-cw)/2)+'px';
-    a.top=b.top=Math.round((vh-ch)/2)+'px';
+    a.top=b.top=Math.round(top)+'px';
     if(mv){
       mv.style.width=a.width; mv.style.height=a.height;
       mv.style.left=a.left;   mv.style.top=a.top;
@@ -11109,7 +11251,7 @@
   }
 
   /* the plain picture, laid back over the effect */
-  var quickMix=100;
+  var quickMix=STORE.mix();
   function drawRaw(a){
     if(a<=0 || !srcReady()) return;
     var SW=stage.width, SH=stage.height;
@@ -12922,6 +13064,55 @@
     lk.addEventListener('mouseleave',off,false);
   })();
   document.getElementById('bClose').addEventListener('click', function(){ openSheet(false); });
+
+  /* ---------- dice ----------
+     Every camera describes its controls the same way, so one roll works for
+     the whole rack. Sliders land on a triangle centred on the middle of
+     their range — two coins averaged — so a roll is usually somewhere
+     interesting and only sometimes at an extreme; every control in the rack
+     has been driven to both of its ends without breaking, so the extremes
+     are allowed, just rarer. Segments are picked evenly. */
+  function applySettings(c,changed){
+    if(changed && c.size) c.size();
+    buildControls();
+    bindQuick();
+    glimpse();
+    STORE.save();
+  }
+  function rollDice(){
+    var c=CAMS[cur], rebuild=false;
+    if(!c.ctrl || !c.ctrl.length){ toast('Nothing on '+c.name+' to roll'); return; }
+    c.ctrl.forEach(function(sp){
+      var old=c.v[sp.k], val=old;
+      if(sp.t==='sld'){
+        var q=(Math.random()+Math.random())/2, st=sp.step||1;
+        val=sp.min+Math.round(q*(sp.max-sp.min)/st)*st;
+        val=clamp(val,sp.min,sp.max);
+      } else if(sp.t==='seg' && sp.opts.length){
+        val=sp.opts[(Math.random()*sp.opts.length)|0][0];
+      }
+      if(val!==old){ c.v[sp.k]=val; if(sp.rebuild) rebuild=true; }
+    });
+    applySettings(c,rebuild);
+    haptic(12);
+    toast(c.name+' — rolled');
+  }
+  function resetCam(){
+    var c=CAMS[cur], d=STORE.defaults(c), rebuild=false;
+    (c.ctrl||[]).forEach(function(sp){ if(sp.rebuild && c.v[sp.k]!==d[sp.k]) rebuild=true; });
+    STORE.reset(c);
+    applySettings(c,rebuild);
+    toast(c.name+' — back to its defaults');
+  }
+  document.getElementById('bDice').addEventListener('click', rollDice);
+  document.getElementById('qDice').addEventListener('click', rollDice);
+  document.getElementById('bReset').addEventListener('click', resetCam);
+  function stashNow(){
+    try { if(ready && CAMS[cur]) grabThumb(CAMS[cur].id); } catch(e){}
+    STORE.flush();
+  }
+  window.addEventListener('pagehide', stashNow);
+  document.addEventListener('visibilitychange', function(){ if(document.hidden) stashNow(); });
   scrim.addEventListener('click', function(){ openSheet(false); });
 
   document.getElementById('bHold').addEventListener('click', function(){

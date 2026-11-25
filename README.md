@@ -128,6 +128,22 @@ you leave. On the other twenty-two the swipe costs nothing, so it stays.
   export mode go the same way. The sheet needs the shutter press still to be
   live, so a slow full-resolution develop falls back to a download and says
   so.
+- **Dice.** `Dice` on the quick panel (or `Roll the dice` in the setup
+  sheet) rolls every control on the current camera at once. Sliders land
+  on a triangle centred on the middle of their range, so a roll is usually
+  somewhere interesting and only sometimes at an extreme; every control in
+  the rack has been driven to both ends without breaking. `Defaults` puts
+  the camera back.
+- **It remembers.** The last camera, the mix, every setting you moved and
+  the launcher's last frames come back next time — kept in the browser's
+  own storage on the phone, and nowhere else. Only settings that differ
+  from a camera's default are kept, so an improved default still reaches
+  anyone who never touched it.
+- **Loaded files sit where you can see them.** A landscape photo or video
+  is centred in the clear space between the name and the controls rather
+  than on the whole screen, where it sat low with the quick panel over its
+  bottom third. A tall file, which would have to shrink by more than a
+  fifth to fit there, keeps the whole screen as the live picture does.
 - **Signature.** `Signature` stamps YOSHI CAMERA into the corner of stills,
   GIFs and clips. It's off unless you turn it on, and every export goes
   through the one function that draws it, so there's nowhere else it can come
