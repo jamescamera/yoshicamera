@@ -134,6 +134,16 @@ you leave. On the other twenty-two the swipe costs nothing, so it stays.
   somewhere interesting and only sometimes at an extreme; every control in
   the rack has been driven to both ends without breaking. `Defaults` puts
   the camera back.
+- **Pinned cameras.** Hold a tile in the launcher to pin it; pinned
+  cameras come first, in the order you pinned them. The rail keeps the
+  rack's own order, because a scrub needs the same camera under the same
+  spot of the finger every time.
+- **Cameras that listen.** With `Sound` on, Turf, Rain and Bitrot hear the
+  room: noise raises Turf's fury, pours more Rain, and damages Bitrot's
+  file further. The level is relative to the room — a slow floor follows
+  its hum and a slowly falling peak its loudest moments — so a quiet room
+  and a loud one both use the whole range. `Reacts to sound` in the setup
+  sheet turns it off without turning off the recorded sound.
 - **It remembers.** The last camera, the mix, every setting you moved and
   the launcher's last frames come back next time — kept in the browser's
   own storage on the phone, and nowhere else. Only settings that differ
@@ -437,7 +447,9 @@ flying that colour takes it back whatever the chart says. Lost ground is
 then recovered as a front, the same way it was lost. Hold trades the two
 off, and its middle is the tipping point: below it an invasion gains ground,
 above it the room pushes the invasion back out, and in between the fronts
-wander. Anything that moves repaints the cells it crosses.
+wander. Anything that moves repaints the cells it crosses, and a finger
+dragged across the picture picks up the colour it lands on and carries it
+into enemy ground.
 
 The other 41 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing

@@ -518,6 +518,12 @@
   .tile.on{border-color:rgb(var(--accent-rgb));box-shadow:0 0 0 2px rgba(var(--accent-rgb),.6);}
   .tile.on .cap{background:linear-gradient(to bottom,#E8C24E,var(--accent));}
   .tile:active{transform:translateY(1px);}
+  .tile{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
+  .tile.pinned::after{
+    content:'';position:absolute;top:7px;right:7px;width:9px;height:9px;border-radius:50%;
+    background:rgb(var(--accent-rgb));box-shadow:0 0 0 2px rgba(255,255,255,.85),0 1px 4px rgba(0,0,0,.4);
+  }
+  .tile.pressing{transform:scale(.96);transition:transform .35s;}
 
   #deck{
     padding-left:max(18px,env(safe-area-inset-left,0px));
@@ -743,6 +749,7 @@
       <button class="b" id="bHold">Hold</button>
       <button class="b" id="bFlip">Flip</button>
       <button class="b" id="bMic">Sound off</button>
+      <button class="b on" id="bEar">Reacts to sound</button>
       <button class="b on" id="bFmt">MP4</button>
       <button class="b" id="bAspect">Screen</button>
       <button class="b" id="bShare" style="display:none">Share sheet</button>
@@ -1872,8 +1879,8 @@
       for(i=0;i<cols;i++){ headY[i]=-Math.random()*rows; spd[i]=0.35+Math.random()*0.9; }
     }
     reg({
-      id:'rain', name:'Rain', line:'Written in falling glyphs',
-      note:'Every character was weighed at startup. Each cell takes the one whose ink matches the light beneath it.',
+      id:'rain', name:'Rain', line:'Written in falling glyphs', ears:true,
+      note:'Every character was weighed at startup. Each cell takes the one whose ink matches the light beneath it. With Sound on, it falls faster when the room is loud.',
       v:v,
       ctrl:[
         {t:'seg',k:'col',label:'Phosphor',opts:[['green','Green'],['amber','Amber'],['bone','Bone'],['true','True']]},
@@ -1890,7 +1897,8 @@
         pixels=src.x.getImageData(0,0,cols,rows).data;
         lev.read(pixels,cols*rows);
         if(!held){
-          var c, sp=(v.fall/100)*1.5;
+          // with Sound on, the room's loudness pours more rain
+          var c, sp=(v.fall/100)*1.5*(1+EAR.level()*2.5);
           for(c=0;c<cols;c++){
             headY[c]+=spd[c]*sp;
             if(headY[c]>rows+rows*0.4) headY[c]=-Math.random()*rows*0.6;
@@ -2390,14 +2398,14 @@
           nx=c.nx; ny=c.ny; tw=cw/nx; th=ch/ny;
           for(b=0;b<ny;b++) for(a=0;a<nx;a++){
             fx=(a%2)?-1:1; fy=(b%2)?-1:1;
-            ctx.save();
-            ctx.translate(x0+a*tw+(fx<0?tw:0), y0+b*th+(fy<0?th:0));
-            ctx.scale(fx,fy);
+            /* the flip is set as one matrix rather than save, translate,
+               scale and restore around every draw — the same transform, and
+               the save/restore pair alone was half of this camera's time */
+            ctx.setTransform(kx*fx,0,0,ky*fy, kx*(x0+a*tw+(fx<0?tw:0)), ky*(y0+b*th+(fy<0?th:0)));
             // the cell edges land on fractions of a pixel, so drawn at exactly
             // their own size the dark ground showed through between them as a
             // grid of thin seams. A pixel of overlap closes it.
             ctx.drawImage(src2,sx,sy,sw,sh,0,0,tw+ov,th+ov);
-            ctx.restore();
           }
         }
         ctx.setTransform(1,0,0,1,0,0);
@@ -6381,8 +6389,8 @@
     }
     function build(){ sizeFor(); }
     reg({
-      id:'bitrot', name:'Bitrot', line:'A corrupted-file camera',
-      note:'The running total a JPEG keeps as it walks the picture, damaged on purpose. Corruption sets how often a value is hit; Smear sets how far the error runs before a restart marker clears it, so low Smear speckles and high Smear drags whole bands across the frame. Held freezes one pattern of damage, Drift lets it crawl, Burst tears it apart continuously.',
+      id:'bitrot', name:'Bitrot', line:'A corrupted-file camera', ears:true,
+      note:'The running total a JPEG keeps as it walks the picture, damaged on purpose. Corruption sets how often a value is hit; Smear sets how far the error runs before a restart marker clears it, so low Smear speckles and high Smear drags whole bands across the frame. Held freezes one pattern of damage, Drift lets it crawl, Burst tears it apart continuously. With Sound on, a loud moment damages the file further.',
       v:v,
       ctrl:[
         {t:'seg',k:'mode',label:'Damage',opts:[['drift','Drift'],['burst','Burst'],['still','Held']]},
@@ -6401,14 +6409,18 @@
         if(!grabInto(src,RW,RH)) return;
         var sd=src.x.getImageData(0,0,RW,RH).data, o=img.data;
         var t=stamp*0.001;
-        var dmg=v.damage/100, hold=v.smear/100;
+        /* with Sound on, a loud moment damages the file further and rolls
+           the damage on — a shout tears it, quiet lets it settle back */
+        var loud=EAR.level();
+        var dmg=Math.min(1,v.damage/100+loud*0.55), hold=v.smear/100;
         /* restart markers: the whole reason corruption reads as bands. Far
            apart (high Smear) and one bad value discolours most of a row */
         var restartEvery=Math.max(1, Math.round(1+hold*(BW-1)));
         var splitPx=Math.round((v.split/100)*blk*1.1);
-        var tearPx=(v.tear/100)*RW*0.16;
+        var tearPx=Math.min(1,v.tear/100+loud*0.5)*RW*0.16;
         // Held holds one pattern still; Burst re-rolls the damage fast
         var tk=(v.mode==='still')?0:Math.floor(t*(v.mode==='burst'?6:1.4));
+        if(loud>0.35) tk+=Math.floor(t*12)*7919;
         var bx,by,x,y,q,eY,eCb,eCr,shift,dR,dG,dB,rowTear,base,x0,x1,y0,y1;
         for(by=0;by<BH;by++){
           eY=0; eCb=0; eCr=0; shift=0;
@@ -7799,9 +7811,12 @@
       }
       var r=Math.max(2,Math.round(gw/90));
       box(tE,r); box(tF,r); box(tG,r);
-      var th,a,b2,c2,sum;
+      var a,b2,c2,sum,r2,c2p,cph,sph;
       for(i=0;i<N;i++){
-        th=0.5*Math.atan2(2*tF[i], tE[i]-tG[i]) + Math.PI/2;   // minor axis
+        /* minor axis, at 0.5*atan2(2F, E-G) + 90°. Worked with half-angle
+           identities instead of atan2, cos and sin — the same direction to
+           the last bit that matters, from square roots alone, and this loop
+           runs over every pixel of every frame */
         /* How much direction is actually there. On a flat wall the tensor is
            all noise and atan2(0,0) is zero, which is why an early version
            combed the whole sky into horizontal streaks — the picture had no
@@ -7809,9 +7824,13 @@
            stands in for the painter's hand, and the two are blended by how
            much the picture really has to say. */
         a=tE[i]-tG[i]; b2=2*tF[i]; sum=tE[i]+tG[i];
-        c2=sum>1e-6 ? Math.sqrt(a*a+b2*b2)/sum : 0;
+        r2=Math.sqrt(a*a+b2*b2);
+        c2=sum>1e-6 ? r2/sum : 0;
         coh[i]=c2;
-        ex[i]=Math.cos(th); ey[i]=Math.sin(th);
+        c2p = r2>0 ? a/r2 : 1;                                   // cos of twice the major angle
+        cph=Math.sqrt(Math.max(0,(1+c2p)*0.5));
+        sph=Math.sqrt(Math.max(0,(1-c2p)*0.5)); if(b2<0) sph=-sph;
+        ex[i]=-sph; ey[i]=cph;
       }
     }
     /* a smooth, slowly turning field — no noise texture, just two sines that
@@ -8475,6 +8494,7 @@
   (function(){
     var small=mk(), out=mk(), img=null, gw=2, gh=2, N=0;
     var band=null, lum=null, bf=null, bfb=null, inkA=null, tmp=null, noise=null, NS=128;
+    var nWx=null, nWy=null, nRx=null, nRy=null, nGran=null, nInk=null;
     var tiltX=0.2, tiltY=1;                         // which way the paper is leaning
     var v={ paper:'cold', washes:6, pigment:68, bleed:38, rim:62, grain2:44, ink:34, wet:30, grain:380 };
 
@@ -8494,6 +8514,20 @@
         noise=new Float32Array(NS*NS);
         var i, sd=20260821;
         for(i=0;i<NS*NS;i++){ sd=(sd*1664525+1013904223)>>>0; noise[i]=sd/4294967296; }
+      }
+      /* Every noise value below depends on where a pixel is and nothing
+         else, so it is the same on every frame. Worked out seven times per
+         pixel per frame it was most of this camera's time; worked out once
+         here, the frame only looks it up. */
+      nWx=new Float32Array(N); nWy=new Float32Array(N); nRx=new Float32Array(N); nRy=new Float32Array(N);
+      nGran=new Float32Array(N); nInk=new Float32Array(N);
+      var x, y, k;
+      for(y=0;y<gh;y++) for(x=0;x<gw;x++){
+        k=y*gw+x;
+        nWx[k]=nz(x,y,0.035)-0.5;      nRx[k]=nz(x,y,0.011)-0.35;
+        nWy[k]=nz(x+57,y+31,0.035)-0.5; nRy[k]=nz(x+11,y+83,0.011)-0.35;
+        nGran[k]=nz(x,y,0.42)*0.7+nz(x+29,y+13,0.16)*0.3;
+        nInk[k]=nz(x,y,0.055);
       }
     }
     function box(a,r){
@@ -8559,8 +8593,8 @@
            a clean curve with roughness painted along it afterwards. */
         for(y=0;y<gh;y++) for(x=0;x<gw;x++){
           i=y*gw+x;
-          sx=x+(nz(x,y,0.035)-0.5)*warp+tiltX*run*(nz(x,y,0.011)-0.35);
-          sy=y+(nz(x+57,y+31,0.035)-0.5)*warp+tiltY*run*(nz(x+11,y+83,0.011)-0.35);
+          sx=x+nWx[i]*warp+tiltX*run*nRx[i];
+          sy=y+nWy[i]*warp+tiltY*run*nRy[i];
           xi=sx<0?0:(sx>gw-1?gw-1:sx|0);
           yi=sy<0?0:(sy>gh-1?gh-1:sy|0);
           o=(yi*gw+xi)*4;
@@ -8647,7 +8681,7 @@
           /* how much pigment is standing here at all */
           dens=(1-((b+0.5)/nb))*(0.5+(v.pigment/100)*1.25);   // how loaded the brush was
           dens+=diff*rim*0.62;                       // the stranded edge
-          g2=nz(x,y,0.42)*0.7+nz(x+29,y+13,0.16)*0.3;
+          g2=nGran[i];
           dens*=1-gran*tooth*(1-g2);                 // settles in the hollows
           if(dens<0) dens=0; if(dens>1.9) dens=1.9;
 
@@ -8655,7 +8689,7 @@
              of the paper rather than speckled by it, and properly black:
              ink is its own substance laid over the wash, not more of
              whatever colour happens to be underneath */
-          e=inkA[i]*(0.62+0.55*nz(x,y,0.055));
+          e=inkA[i]*(0.62+0.55*nInk[i]);
           if(e>1) e=1;
 
           /* Transparent, always. Every unit of density is one more glaze
@@ -9972,9 +10006,27 @@
       return best;
     }
 
+    /* a finger picks up the colour it lands on and carries it: every cell
+       under the drag goes over to that side, which then has to hold what it
+       was given against everything around it */
+    var carry=-1;
+    function brush(nx,ny){
+      if(!A || carry<0 || carry>=T) return;
+      var cx=nx*gw, cy=ny*gh, r=Math.max(2,gh/28), x, y, dx, dy;
+      for(y=Math.max(0,Math.floor(cy-r)); y<=Math.min(gh-1,Math.ceil(cy+r)); y++)
+        for(x=Math.max(0,Math.floor(cx-r)); x<=Math.min(gw-1,Math.ceil(cx+r)); x++){
+          dx=x-cx; dy=y-cy;
+          if(dx*dx+dy*dy<=r*r) A[y*gw+x]=carry;
+        }
+    }
     reg({
-      id:'turf', name:'Turf', line:'The colours in the room, at war',
-      note:'Every patch of colour is a faction, and the colour wheel is the type chart: each faction beats the ones just ahead of it round the wheel and loses to the ones just behind, so none of them is strongest and the war never ends. Each cell is attacked by two of its neighbours every round and takes the colour of any that wins; Fury is how many of those attacks are actually made. Hold is home advantage: ground still held by the colour the camera sees there is harder to take, and lost ground is won back from the ground around it that held — past the middle of the slider the room wins, below it the war does. Anything that moves repaints what it crosses — so the scene stays standing and the fighting happens along its borders. Luck lets a losing attack win now and again. Shadows and highlights are two sides of their own with no colour to fight with: they either stand as walls or get eaten by everyone. Shading lights each side’s colour the way the room is lit, so shapes keep their form under the war.',
+      id:'turf', name:'Turf', line:'The colours in the room, at war', ears:true,
+      touch:function(x,y,phase){
+        if(!A) return;
+        if(phase==='down') carry=A[clamp(Math.floor(y*gh),0,gh-1)*gw+clamp(Math.floor(x*gw),0,gw-1)];
+        brush(x,y);
+      },
+      note:'Every patch of colour is a faction, and the colour wheel is the type chart: each faction beats the ones just ahead of it round the wheel and loses to the ones just behind, so none of them is strongest and the war never ends. Each cell is attacked by two of its neighbours every round and takes the colour of any that wins; Fury is how many of those attacks are actually made. Hold is home advantage: ground still held by the colour the camera sees there is harder to take, and lost ground is won back from the ground around it that held — past the middle of the slider the room wins, below it the war does. Anything that moves repaints what it crosses — so the scene stays standing and the fighting happens along its borders. Luck lets a losing attack win now and again. Shadows and highlights are two sides of their own with no colour to fight with: they either stand as walls or get eaten by everyone. Shading lights each side’s colour the way the room is lit, so shapes keep their form under the war. Drag on the picture to pick up the colour under your finger and carry it into enemy ground. With Sound on, noise in the room raises the fury.',
       v:v,
       ctrl:[
         {t:'seg',k:'palette',label:'Colours',opts:[['room','The room’s'],['bold','Flags']]},
@@ -10007,6 +10059,10 @@
         /* a coin smaller than 0.5 can never tip a stand-off, so Luck starts
            there: any luck at all is some luck */
         var luck=v.luck>0 ? 0.5+(v.luck/100)*1.7 : 0, fury=0.03+0.97*Math.pow(v.fury/100,1.5);
+        /* noise in the room is noise on the battlefield: loud moments raise
+           the fury towards all-out and give luck a little more say */
+        var loud=EAR.level();
+        if(loud>0){ fury+=(1-fury)*loud*0.85; luck=Math.max(luck,0.5)+loud*0.6; }
         /* home advantage and the counter-attack are tuned together so the
            middle of the slider is the tipping point: below it an invading
            front gains ground, above it the room pushes it back out, and at
@@ -10063,6 +10119,7 @@
         var lead=0;
         for(f=1;f<T;f++) if(count[f]>count[lead]) lead=f;
         hSub.textContent=NF+' factions · the '+nameOf(lead)+' hold '+Math.round(100*count[lead]/NC)+'%'+
+                         (EAR.on()?' · listening':'')+
                          (moved>NC*0.02?' · movement repainting':'');
       }
     });
@@ -10137,6 +10194,59 @@
 
   var cur=0, camReady={};
 
+  /* ---------- an ear ----------
+     When Sound is on for recording, the same microphone can be listened to.
+     This turns it into one number from 0 to 1 — how loud the room is right
+     now, relative to how loud it has been — that any camera can read. The
+     scale adapts: a slow floor follows the room's hum and a slowly falling
+     peak follows its loudest moments, so a quiet room and a loud one both
+     use the whole range. Rises are fast and falls are slow, the way a
+     meter's needle moves, so a clap lands and then lets go. */
+  var EAR=(function(){
+    var ac=null, an=null, srcN=null, sink=null, buf=null, lvl=0, floor=0.004, peak=0.05, enabled=true, last=0;
+    function prime(){
+      try {
+        if(!ac){ var A=window.AudioContext||window.webkitAudioContext; if(A) ac=new A(); }
+        if(ac && ac.state==='suspended') ac.resume();
+      } catch(e){}
+    }
+    function detach(){
+      try { if(srcN) srcN.disconnect(); } catch(e){}
+      try { if(an) an.disconnect(); } catch(e){}
+      srcN=null; an=null; lvl=0;
+    }
+    function attach(stream){
+      prime(); if(!ac || !stream) return;
+      detach();
+      try {
+        srcN=ac.createMediaStreamSource(stream);
+        an=ac.createAnalyser(); an.fftSize=1024; buf=new Uint8Array(an.fftSize);
+        if(!sink){ sink=ac.createGain(); sink.gain.value=0; sink.connect(ac.destination); }
+        srcN.connect(an); an.connect(sink);   // silent, but kept in the graph so it is always pulled
+        floor=0.004; peak=0.05;
+      } catch(e){ detach(); }
+    }
+    function level(){
+      if(!an || !enabled) return 0;
+      var t=now();
+      if(t-last<12) return lvl;
+      last=t;
+      var i, x, sum=0;
+      an.getByteTimeDomainData(buf);
+      for(i=0;i<buf.length;i++){ x=(buf[i]-128)/128; sum+=x*x; }
+      var rms=Math.sqrt(sum/buf.length);
+      floor = rms<floor ? floor*0.9+rms*0.1 : floor*0.998+rms*0.002;
+      peak = Math.max(rms, peak*0.996, floor*3+0.012);
+      x=(rms-floor)/Math.max(1e-4,peak-floor);
+      x=x<0?0:(x>1?1:x);
+      lvl = x>lvl ? lvl*0.35+x*0.65 : lvl*0.88+x*0.12;
+      return lvl;
+    }
+    return { prime:prime, attach:attach, detach:detach, level:level,
+             on:function(){ return !!an && enabled; },
+             enabled:function(){ return enabled; }, set:function(b){ enabled=!!b; if(!enabled) lvl=0; } };
+  })();
+
   /* ---------- memory between visits ----------
      Every visit used to start at Gamut on its defaults, and the launcher's
      pictures of the room vanished with the tab. This keeps the last camera,
@@ -10149,7 +10259,7 @@
      a slider's range, a segment's options — so a stale or damaged entry is
      ignored rather than trusted. */
   var STORE=(function(){
-    var KEY='yoshi.state.v1', TKEY='yoshi.thumbs.v1', saveT=null, thumbT=null, thumbQ={};
+    var KEY='yoshi.state.v1', TKEY='yoshi.thumbs.v1', saveT=null, thumbT=null, thumbQ={}, PINS=[];
     /* defaults are keyed by the settings object, not the camera: the stacked
        prototypes borrow their second camera's settings, so they must share
        its defaults too, or Defaults on a stack would blank that camera */
@@ -10175,10 +10285,14 @@
         (c.ctrl||[]).forEach(function(sp){ if(sp.k in o && ok(sp,o[sp.k])) c.v[sp.k]=o[sp.k]; });
       });
       if(st.cam) for(var i=0;i<CAMS.length;i++) if(CAMS[i].id===st.cam){ cur=i; break; }
+      if(st.ear===false) EAR.set(false);
+      if(st.pins && st.pins.forEach) st.pins.forEach(function(id){
+        if(typeof id==='string' && PINS.indexOf(id)<0 && CAMS.some(function(c){ return c.id===id; })) PINS.push(id);
+      });
     }
     function write(){
       saveT=null;
-      var st={ cam:CAMS[cur]?CAMS[cur].id:null, mix:quickMix, v:{} };
+      var st={ cam:CAMS[cur]?CAMS[cur].id:null, mix:quickMix, ear:EAR.enabled(), pins:PINS.slice(), v:{} };
       var seen=[];
       CAMS.forEach(function(c){
         if(seen.indexOf(c.v)>=0) return;     // a stack's settings are its second camera's, saved there
@@ -10225,7 +10339,10 @@
         im.src=all[id];
       });
     }
-    return { restore:restore, save:save, flush:flush, mix:mix, reset:reset, defaults:defaults, ok:ok, thumb:thumb, loadThumbs:loadThumbs };
+    function pinned(id){ return PINS.indexOf(id)>=0; }
+    function togglePin(id){ var k=PINS.indexOf(id); if(k>=0) PINS.splice(k,1); else PINS.push(id); save(); return k<0; }
+    function pins(){ return PINS.slice(); }
+    return { pinned:pinned, togglePin:togglePin, pins:pins, restore:restore, save:save, flush:flush, mix:mix, reset:reset, defaults:defaults, ok:ok, thumb:thumb, loadThumbs:loadThumbs };
   })();
   STORE.restore();
   var ACCENTS={
@@ -10293,6 +10410,7 @@
     paintPips();
     STORE.save();
     if(!quiet) toast(c.name +
+      ((c.ears && EAR.on()) ? ' — listening' : '') +
       (c.touch ? ' — drag the picture; the rail changes camera'
                : ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : '')));
   }
@@ -10764,12 +10882,22 @@
   }
   var launchEl=document.getElementById('launch'), lscrim=document.getElementById('lscrim');
   var launchGrid=document.getElementById('launchGrid');
+  /* Favourites. Holding a tile pins it, and pinned cameras come first in
+     the launcher in the order they were pinned. The rail keeps the rack's
+     own order — it is a place to scrub, and a scrub needs the same thing
+     under the same spot of the finger every time. */
+  var pressT=null, pressFired=false;
   function buildLauncher(){
     launchGrid.innerHTML='';
-    document.getElementById('launchN').textContent=CAMS.length+' cameras';
-    CAMS.forEach(function(c,i){
+    var np=STORE.pins().length;
+    document.getElementById('launchN').textContent=CAMS.length+' cameras · '+(np ? np+' pinned' : 'hold one to pin it');
+    var order=[], i0;
+    STORE.pins().forEach(function(id){ for(i0=0;i0<CAMS.length;i0++) if(CAMS[i0].id===id){ order.push(i0); break; } });
+    for(i0=0;i0<CAMS.length;i0++) if(order.indexOf(i0)<0) order.push(i0);
+    order.forEach(function(i){
+      var c=CAMS[i];
       var b=document.createElement('button');
-      b.className = i===cur ? 'tile on' : 'tile';
+      b.className = (i===cur ? 'tile on' : 'tile') + (STORE.pinned(c.id) ? ' pinned' : '');
       var t=THUMBS[c.id];
       if(t){
         var q=t.cloneNode(false);
@@ -10799,7 +10927,28 @@
       var l=document.createElement('span'); l.textContent=c.line;
       cap.appendChild(n); cap.appendChild(l);
       b.appendChild(cap);
+      var px=0, py=0;
+      function cancelPress(){ if(pressT){ clearTimeout(pressT); pressT=null; } b.classList.remove('pressing'); }
+      b.addEventListener('pointerdown',function(e){
+        pressFired=false; px=e.clientX; py=e.clientY;
+        b.classList.add('pressing');
+        pressT=setTimeout(function(){
+          pressT=null; pressFired=true; b.classList.remove('pressing');
+          var on=STORE.togglePin(c.id);
+          haptic(18);
+          toast(c.name+(on?' pinned to the front':' unpinned'));
+          var keep=launchGrid.scrollTop;
+          buildLauncher();
+          launchGrid.scrollTop=keep;
+        },480);
+      });
+      b.addEventListener('pointermove',function(e){ if(pressT && Math.abs(e.clientX-px)+Math.abs(e.clientY-py)>10) cancelPress(); });
+      b.addEventListener('pointerup',cancelPress);
+      b.addEventListener('pointerleave',cancelPress);
+      b.addEventListener('pointercancel',cancelPress);
+      b.addEventListener('contextmenu',function(e){ e.preventDefault(); });
       b.addEventListener('click',function(){
+        if(pressFired){ pressFired=false; return; }   // the hold was the gesture, not a tap
         hideHint();
         openLauncher(false);
         if(i!==cur) activate(i);
@@ -10866,6 +11015,15 @@
       }
       return false;
     }
+    /* where on the picture a finger is, 0 to 1 across it. With the live lens
+       the picture is the whole window and this is the same as before; with
+       a loaded file it is letterboxed, and measured against the window the
+       touch landed somewhere other than under the finger. */
+    function onStage(t){
+      var r=stage.getBoundingClientRect();
+      if(!r.width || !r.height) return [t.clientX/Math.max(1,window.innerWidth), t.clientY/Math.max(1,window.innerHeight)];
+      return [clamp((t.clientX-r.left)/r.width,0,1), clamp((t.clientY-r.top)/r.height,0,1)];
+    }
     function inControls(y){
       return y > (window.innerHeight - 210) || y < 96;
     }
@@ -10876,7 +11034,7 @@
       x0=t.clientX; y0=t.clientY; t0=now(); tracking=true;
       dragCam=false;
       var c=CAMS[cur];
-      if(c && c.touch){ c.touch(t.clientX/Math.max(1,window.innerWidth), t.clientY/Math.max(1,window.innerHeight), 'down'); }
+      if(c && c.touch){ var q=onStage(t); c.touch(q[0], q[1], 'down'); }
     }
     function move(e){
       if(!tracking) return;
@@ -10884,7 +11042,7 @@
       var c=CAMS[cur];
       if(c && c.touch){
         dragCam=true;
-        c.touch(t.clientX/Math.max(1,window.innerWidth), t.clientY/Math.max(1,window.innerHeight), 'move');
+        var q=onStage(t); c.touch(q[0], q[1], 'move');
         if(e.preventDefault) e.preventDefault();
       }
     }
@@ -11007,6 +11165,7 @@
   }
   function stopMicForPage(){
     micOn=false;
+    EAR.detach();
     if(micStream){
       try { micStream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
       micStream=null;
@@ -13033,13 +13192,19 @@
     var self=this;
     if(micOn){
       micOn=false;
+      EAR.detach();
       if(micStream){ var t=micStream.getTracks(),i; for(i=0;i<t.length;i++) t[i].stop(); micStream=null; }
       self.className='b'; self.textContent='Sound off';
       return;
     }
+    EAR.prime();                      // an AudioContext has to be woken inside the tap itself
     navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
       micStream=s; micOn=true;
+      EAR.attach(s);
       self.className='b on'; self.textContent='Sound on';
+      var c=CAMS[cur];
+      toast(EAR.enabled() ? (c && c.ears ? 'Sound on — '+c.name+' is listening' : 'Sound on — Turf, Rain and Bitrot listen')
+                          : 'Sound on');
     })['catch'](function(){ toast('Microphone refused'); });
   });
 
@@ -13104,6 +13269,16 @@
     applySettings(c,rebuild);
     toast(c.name+' — back to its defaults');
   }
+  (function(){
+    var be=document.getElementById('bEar');
+    function paint(){ be.className=EAR.enabled()?'b on':'b'; be.textContent=EAR.enabled()?'Reacts to sound':'Ignores sound'; }
+    paint();
+    be.addEventListener('click', function(){
+      EAR.set(!EAR.enabled()); paint(); STORE.save();
+      toast(EAR.enabled() ? (micOn ? 'Listening cameras react to the room' : 'Cameras will react once Sound is on')
+                          : 'Cameras ignore the sound — it is still recorded');
+    });
+  })();
   document.getElementById('bDice').addEventListener('click', rollDice);
   document.getElementById('qDice').addEventListener('click', rollDice);
   document.getElementById('bReset').addEventListener('click', resetCam);
