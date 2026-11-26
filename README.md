@@ -18,7 +18,7 @@ A project by [Yoshi Babaganoush](https://x.com/minted_i).
 
 ## The cameras
 
-The rack currently holds 42 instruments. Drag the rail above the shutter to
+The rack currently holds 41 instruments. Drag the rail above the shutter to
 move between them, tap the grid at its end (or the camera's name) for all of
 them at once, and swipe the picture on the cameras that aren't using it for
 something else. Each gets its own controls in the setup sheet.
@@ -65,8 +65,7 @@ something else. Each gets its own controls in the setup sheet.
 | Pareidolia | Whatever was nearly there |
 | Loaf | The last few seconds, as a solid |
 | Turf | The colours in the room, at war |
-| Ink → VHS | A stacked-effect prototype |
-| Mosaic → Rain | A stacked-effect prototype |
+| Stack | Any camera, through any other |
 
 Gamut is the founding camera and the one described in detail below; every
 other instrument is its own algorithm with its own sliders, living in the
@@ -451,7 +450,16 @@ wander. Anything that moves repaints the cells it crosses, and a finger
 dragged across the picture picks up the colour it lands on and carries it
 into enemy ground.
 
-The other 41 cameras each implement their own transform the same way —
+Stack is what the two stacked prototypes, Ink → VHS and Mosaic → Rain,
+were testing for. One camera runs on the lens and its finished picture is
+handed to a second camera as though it were the lens. Both are chosen from
+the setup sheet, and a switch shows either camera's controls — its own
+settings, shared with that camera on its own rather than copied. Dice rolls
+the pair as well as the settings, which is the quickest way through the
+sixteen hundred combinations. A WebGL camera can go first but not second,
+because the second stage draws on the ordinary canvas the shutter saves.
+
+The other 40 cameras each implement their own transform the same way —
 hand-written canvas/WebGL code reading the raw frame — rather than sharing
 one filter pipeline with different parameters.
 

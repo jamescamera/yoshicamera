@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0C0D10">
 <title>YOSHI CAMERA — one shutter, every camera</title>
-<meta name="description" content="Forty-two cameras that refuse to behave, on one shutter. Runs entirely in your browser — your camera feed never leaves your device.">
+<meta name="description" content="Forty-one cameras that refuse to behave, on one shutter. Runs entirely in your browser — your camera feed never leaves your device.">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="Yoshi Camera — thirty-one cameras, one shutter">
-<meta property="og:description" content="Forty-two cameras that refuse to behave, on one shutter. Your camera feed never leaves your device.">
+<meta property="og:description" content="Forty-one cameras that refuse to behave, on one shutter. Your camera feed never leaves your device.">
 <meta property="og:image" content="share.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Yoshi Camera — thirty-one cameras, one shutter">
-<meta name="twitter:description" content="Forty-two cameras that refuse to behave, on one shutter.">
+<meta name="twitter:description" content="Forty-one cameras that refuse to behave, on one shutter.">
 <meta name="twitter:image" content="share.png">
 <meta name="twitter:creator" content="@minted_i">
 
@@ -222,6 +222,16 @@
   #camName{font-size:15px;font-weight:700;letter-spacing:.03em;margin:8px 0 2px;}
   #camLine{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 4px;}
   #ctlTools{margin:6px 0 2px;}
+  select.pick{
+    width:100%;font:inherit;font-size:12px;letter-spacing:.04em;color:var(--ink);
+    padding:9px 30px 9px 12px;border-radius:14px;border:1px solid rgba(26,26,23,.18);
+    -webkit-appearance:none;appearance:none;
+    background:linear-gradient(to bottom,#FFFDF7,#DFDBD0) no-repeat;
+    box-shadow:0 2px 5px rgba(26,26,23,.12),inset 0 1px 0 rgba(255,255,255,.7);
+    background-image:linear-gradient(45deg,transparent 50%,var(--ink) 50%),linear-gradient(135deg,var(--ink) 50%,transparent 50%),linear-gradient(to bottom,#FFFDF7,#DFDBD0);
+    background-position:calc(100% - 17px) 52%,calc(100% - 12px) 52%,0 0;
+    background-size:5px 5px,5px 5px,100% 100%;
+  }
   .hr{height:1px;background:var(--rule);margin:12px 0 0;}
 
   .row{display:flex;gap:5px;flex-wrap:wrap;}
@@ -10125,49 +10135,67 @@
     });
   })();
 
-  /* ---------------- STACK PROTOTYPES — two cameras, chained ----------------
-     Not a real feature yet — a quick test of runChain() (further down) to
-     see whether feeding one camera's own output into a second one as its
-     "source" is worth building into an actual pick-any-two interface, or
-     just an interesting dead end. Each control panel here is whichever
-     camera is second in its own pair — the first stage keeps its last-used
-     settings from whenever it was last used on its own. */
+  /* ---------------- STACK — any camera, through any other ----------------
+     Two prototypes proved the idea: run one camera, then hand its finished
+     picture to a second camera as though it were the lens. They were fixed
+     pairs, though, and each showed only its second camera's controls. This
+     is the general thing. Pick what goes first and what goes after it, and
+     switch the controls between the two — they are each camera's own
+     settings, shared with that camera on its own, not copies of them.
+
+     A camera that draws with WebGL can go first but not second: the second
+     stage draws onto the ordinary canvas, which is what the shutter saves. */
   (function(){
+    var v={ first:'ink', second:'vhs', edit:'second' };
+    var STATIC=[
+      {t:'pick',k:'first', label:'First',rebuild:true,relayout:true,opts:[]},
+      {t:'pick',k:'second',label:'Then', rebuild:true,relayout:true,opts:[]},
+      {t:'seg', k:'edit',  label:'Controls for',relayout:true,opts:[['first','First'],['second','Then']]}
+    ];
+    function eligible(c,second){ return c.id!=='stack' && !(second && c.gl); }
+    function listFor(second){
+      var o=[], i;
+      for(i=0;i<CAMS.length;i++) if(eligible(CAMS[i],second)) o.push([CAMS[i].id,CAMS[i].name]);
+      return o;
+    }
+    function has(opts,id){ for(var i=0;i<opts.length;i++) if(opts[i][0]===id) return true; return false; }
+    function pair(){ return [camById(v.first), camById(v.second)]; }
+    function prep(){
+      STATIC[0].opts=listFor(false); STATIC[1].opts=listFor(true);
+      if(!has(STATIC[0].opts,v.first))  v.first =has(STATIC[0].opts,'ink')?'ink':STATIC[0].opts[0][0];
+      if(!has(STATIC[1].opts,v.second)) v.second=has(STATIC[1].opts,'vhs')?'vhs':STATIC[1].opts[0][0];
+      var p=pair(), ed=(v.edit==='first')?p[0]:p[1], k, i, sp, cp;
+      STATIC[2].opts=[['first',p[0].name],['second',p[1].name]];
+      cfg.ctrl=STATIC.slice();
+      for(i=0;i<(ed.ctrl||[]).length;i++){
+        sp=ed.ctrl[i]; cp={};
+        for(k in sp) cp[k]=sp[k];
+        cp.obj=ed.v; cp.cam=ed;          // this control writes to that camera's own settings
+        cfg.ctrl.push(cp);
+      }
+      cfg.touch = (p[1].touch||p[0].touch) ? touch : undefined;
+    }
+    function touch(x,y,phase){ var p=pair(), t=p[1].touch?p[1]:p[0]; if(t.touch) t.touch(x,y,phase); }
+    function build(){
+      prep();
+      var p=pair(), i;
+      for(i=0;i<2;i++){
+        if(!camReady[p[i].id]){ p[i].init(); camReady[p[i].id]=1; }
+        else if(p[i].size) p[i].size();
+      }
+    }
     var cfg={
-      id:'stack_ink_vhs', name:'Ink → VHS', line:'A stacked-effect prototype',
-      note:'Ink runs first; VHS then reprocesses Ink\'s own rendered picture rather than the camera feed. The controls below are the real VHS ones, shared with VHS on its own — Ink is wherever you last left it.',
-      v:{}, ctrl:[],
+      id:'stack', name:'Stack', line:'Any camera, through any other',
+      note:'The first camera runs on the lens; the second runs on the first one’s finished picture as though that were the lens. Choose both, then switch the controls between them — they are each camera’s own settings, the same ones it has on its own. Dice rolls the pair as well. A WebGL camera can go first but not second.',
+      v:v, ctrl:[], prep:prep,
       init:build, size:build,
       frame:function(){
-        runChain('ink','vhs');
-        hSub.textContent='ink → vhs · stack prototype';
+        var p=pair();
+        if(!p[0]||!p[1]) return;
+        runChain(v.first,v.second);
+        hSub.textContent=p[0].name+' → '+p[1].name;
       }
     };
-    function build(){
-      var b=camById('vhs');
-      if(!b) return;
-      if(!camReady.vhs){ b.init(); camReady.vhs=1; }
-      cfg.v=b.v; cfg.ctrl=b.ctrl;
-    }
-    reg(cfg);
-  })();
-  (function(){
-    var cfg={
-      id:'stack_mosaic_rain', name:'Mosaic → Rain', line:'A stacked-effect prototype',
-      note:'Mosaic runs first; Rain then reprocesses Mosaic\'s own rendered picture rather than the camera feed. The controls below are the real Rain ones, shared with Rain on its own — Mosaic is wherever you last left it.',
-      v:{}, ctrl:[],
-      init:build, size:build,
-      frame:function(){
-        runChain('mosaic','rain');
-        hSub.textContent='mosaic → rain · stack prototype';
-      }
-    };
-    function build(){
-      var b=camById('rain');
-      if(!b) return;
-      if(!camReady.rain){ b.init(); camReady.rain=1; }
-      cfg.v=b.v; cfg.ctrl=b.ctrl;
-    }
     reg(cfg);
   })();
 
@@ -10268,13 +10296,13 @@
     function put(k,o){ try { localStorage.setItem(k,JSON.stringify(o)); return true; } catch(e){ return false; } }
     function ok(sp,val){
       if(sp.t==='sld') return typeof val==='number' && isFinite(val) && val>=sp.min && val<=sp.max;
-      if(sp.t==='seg') return sp.opts.some(function(o){ return o[0]===val; });
+      if(sp.t==='seg' || sp.t==='pick') return sp.opts.some(function(o){ return o[0]===val; });
       return false;
     }
     function defaults(c){
       var d=DEF ? DEF.get(c.v) : DEFO[c.id];
       if(!d){ d={}; if(DEF) DEF.set(c.v,d); else DEFO[c.id]=d; }
-      (c.ctrl||[]).forEach(function(sp){ if(!(sp.k in d)) d[sp.k]=c.v[sp.k]; });
+      (c.ctrl||[]).forEach(function(sp){ if(!sp.obj && !(sp.k in d)) d[sp.k]=c.v[sp.k]; });
       return d;
     }
     function restore(){
@@ -10282,7 +10310,7 @@
       var st=get(KEY); if(!st) return;
       if(st.v) CAMS.forEach(function(c){
         var o=st.v[c.id]; if(!o) return;
-        (c.ctrl||[]).forEach(function(sp){ if(sp.k in o && ok(sp,o[sp.k])) c.v[sp.k]=o[sp.k]; });
+        (c.ctrl||[]).forEach(function(sp){ if(!sp.obj && sp.k in o && ok(sp,o[sp.k])) c.v[sp.k]=o[sp.k]; });
       });
       if(st.cam) for(var i=0;i<CAMS.length;i++) if(CAMS[i].id===st.cam){ cur=i; break; }
       if(st.ear===false) EAR.set(false);
@@ -10298,7 +10326,7 @@
         if(seen.indexOf(c.v)>=0) return;     // a stack's settings are its second camera's, saved there
         seen.push(c.v);
         var d=defaults(c), o=null;
-        (c.ctrl||[]).forEach(function(sp){ if(c.v[sp.k]!==d[sp.k] && c.v[sp.k]!==undefined){ o=o||{}; o[sp.k]=c.v[sp.k]; } });
+        (c.ctrl||[]).forEach(function(sp){ if(!sp.obj && c.v[sp.k]!==d[sp.k] && c.v[sp.k]!==undefined){ o=o||{}; o[sp.k]=c.v[sp.k]; } });
         if(o) st.v[c.id]=o;
       });
       put(KEY,st);
@@ -10311,7 +10339,7 @@
       if(qm) qm.value=m; if(qv) qv.textContent=m;
       return m;
     }
-    function reset(c){ var d=defaults(c); (c.ctrl||[]).forEach(function(sp){ if(sp.k in d && d[sp.k]!==undefined) c.v[sp.k]=d[sp.k]; }); save(); }
+    function reset(c){ var d=defaults(c); (c.ctrl||[]).forEach(function(sp){ if(!sp.obj && sp.k in d && d[sp.k]!==undefined) c.v[sp.k]=d[sp.k]; }); save(); }
     /* a launcher tile is 150x200; as a JPEG that is a few kilobytes, so all
        of them together are well inside what a browser lets a page keep */
     function thumb(id,cv){
@@ -10344,7 +10372,9 @@
     function pins(){ return PINS.slice(); }
     return { pinned:pinned, togglePin:togglePin, pins:pins, restore:restore, save:save, flush:flush, mix:mix, reset:reset, defaults:defaults, ok:ok, thumb:thumb, loadThumbs:loadThumbs };
   })();
+  CAMS.forEach(function(c){ if(c.prep) c.prep(); });   // a camera whose controls are built from the rack
   STORE.restore();
+  CAMS.forEach(function(c){ if(c.prep) c.prep(); });   // and again, from what was restored
   var ACCENTS={
     gamut:['201,162,39','#0C0D10'], infinite:['88,117,255','#080A16'], ink:['178,121,59','#11100D'],
     rain:['53,224,122','#05070A'], mosaic:['255,132,48','#12100D'], fold:['74,91,180','#0D0B0A'],
@@ -10357,7 +10387,7 @@
     veil:['255,208,27','#060708'], fresco:['255,169,110','#0B0A09'], current:['64,235,209','#061012'], afterimage:['255,132,188','#09070D'], pull:['255,194,48','#090807'],
     polygon:['138,205,255','#05060A'], bokeh:['255,196,110','#0A0806'],
     bitrot:['255,72,140','#08060A'], thread:['232,228,218','#0B0A09'], tide:['120,196,255','#04122E'], passes:['120,255,190','#05070B'],
-    loaf:['150,190,255','#05060B'], turf:['240,88,64','#0B0909']
+    loaf:['150,190,255','#05060B'], turf:['240,88,64','#0B0909'], stack:['196,150,255','#0A0810']
   };
   var accentMeta=document.querySelector('meta[name=\"theme-color\"]');
   function setAccent(id){
@@ -10470,6 +10500,12 @@
     } catch(e){}
   }
 
+  /* A control normally belongs to the camera showing it. Stack shows
+     controls that belong to the cameras inside it: those carry .obj (whose
+     settings to write) and .cam (whose buffers to rebuild). */
+  function ctlObj(c,sp){ return sp.obj||c.v; }
+  function ctlCam(c,sp){ return sp.cam||c; }
+  function relayout(c){ if(c.prep) c.prep(); buildControls(); bindQuick(); }
   function buildControls(){
     var c=CAMS[cur];
     ctrlEl.innerHTML='';
@@ -10488,41 +10524,67 @@
         seg.className='seg';
         spec.opts.forEach(function(o){
           var b=document.createElement('button');
-          b.className = c.v[spec.k]===o[0] ? 'b on' : 'b';
+          b.className = ctlObj(c,spec)[spec.k]===o[0] ? 'b on' : 'b';
           b.textContent=o[1];
           b.addEventListener('click', function(){
             var kids=seg.getElementsByTagName('button'), j;
             for(j=0;j<kids.length;j++) kids[j].className='b';
             b.className='b on';
-            c.v[spec.k]=o[0];
-            if(spec.rebuild && c.size) c.size();
+            ctlObj(c,spec)[spec.k]=o[0];
+            var own=ctlCam(c,spec);
+            if(spec.rebuild && own.size) own.size();
+            if(spec.relayout) relayout(c);
             glimpse();
             STORE.save();
           });
           seg.appendChild(b);
         });
         f.appendChild(seg);
+      } else if(spec.t==='pick'){
+        /* a choice among dozens — the phone's own picker does that better
+           than a row of forty segment buttons ever could */
+        f.style.flex='1 1 46%';
+        var pl=document.createElement('label');
+        pl.appendChild(document.createTextNode(spec.label));
+        f.appendChild(pl);
+        var sel=document.createElement('select');
+        sel.className='pick';
+        spec.opts.forEach(function(o){
+          var op=document.createElement('option'); op.value=o[0]; op.textContent=o[1];
+          if(ctlObj(c,spec)[spec.k]===o[0]) op.selected=true;
+          sel.appendChild(op);
+        });
+        sel.addEventListener('change', function(){
+          ctlObj(c,spec)[spec.k]=sel.value;
+          var own=ctlCam(c,spec);
+          if(spec.rebuild && own.size) own.size();
+          if(spec.relayout) relayout(c);
+          glimpse();
+          STORE.save();
+        });
+        f.appendChild(sel);
       } else {
         var l=document.createElement('label');
         l.appendChild(document.createTextNode(spec.label+' '));
         var bb=document.createElement('b');
-        bb.textContent=c.v[spec.k];
+        bb.textContent=ctlObj(c,spec)[spec.k];
         l.appendChild(bb);
         f.appendChild(l);
         var s=document.createElement('input');
         s.type='range'; s.min=spec.min; s.max=spec.max;
         if(spec.step) s.step=spec.step;
-        s.value=c.v[spec.k];
+        s.value=ctlObj(c,spec)[spec.k];
         sheetInputs[spec.k]={i:s,b:bb};
         var t=null;
         s.addEventListener('input', function(){
           if(spec.k===qOneKey){ qOne.value=s.value; qOneL.innerHTML=spec.label+' <b>'+s.value+'</b>'; }
-          c.v[spec.k]=parseInt(s.value,10);
-          bb.textContent=c.v[spec.k];
+          ctlObj(c,spec)[spec.k]=parseInt(s.value,10);
+          bb.textContent=ctlObj(c,spec)[spec.k];
           STORE.save();
-          if(spec.rebuild && c.size){
+          var own=ctlCam(c,spec);
+          if(spec.rebuild && own.size){
             if(t) cancelAnimationFrame(t);
-            t=requestAnimationFrame(function(){ c.size(); glimpse(); });
+            t=requestAnimationFrame(function(){ own.size(); glimpse(); });
           }
         });
         s.addEventListener('touchstart', function(){ peek(true); }, false);
@@ -10783,16 +10845,17 @@
   qOne.addEventListener('input', function(){
     if(!qOneKey) return;
     var c=CAMS[cur];
-    c.v[qOneKey]=parseInt(qOne.value,10);
-    qOneL.innerHTML=qOneSpec.label+' <b>'+c.v[qOneKey]+'</b>';
+    var o=ctlObj(c,qOneSpec), own=ctlCam(c,qOneSpec);
+    o[qOneKey]=parseInt(qOne.value,10);
+    qOneL.innerHTML=qOneSpec.label+' <b>'+o[qOneKey]+'</b>';
     STORE.save();
     if(sheetInputs[qOneKey]){
-      sheetInputs[qOneKey].i.value=c.v[qOneKey];
-      sheetInputs[qOneKey].b.textContent=c.v[qOneKey];
+      sheetInputs[qOneKey].i.value=o[qOneKey];
+      sheetInputs[qOneKey].b.textContent=o[qOneKey];
     }
-    if(qOneSpec.rebuild && c.size){
+    if(qOneSpec.rebuild && own.size){
       if(qOneT) clearTimeout(qOneT);
-      qOneT=setTimeout(function(){ c.size(); }, 90);
+      qOneT=setTimeout(function(){ own.size(); }, 90);
     }
   });
 
@@ -10804,8 +10867,8 @@
     qOneKey=sp.k; qOneSpec=sp;
     qOne.min=sp.min; qOne.max=sp.max;
     if(sp.step) qOne.step=sp.step; else qOne.removeAttribute('step');
-    qOne.value=c.v[sp.k];
-    qOneL.innerHTML=sp.label+' <b>'+c.v[sp.k]+'</b>';
+    qOne.value=ctlObj(c,sp)[sp.k];
+    qOneL.innerHTML=sp.label+' <b>'+ctlObj(c,sp)[sp.k]+'</b>';
   }
 
   /* ---------- the rail's own gestures ----------
@@ -11519,8 +11582,9 @@
     chainCan.x.setTransform(1,0,0,1,0,0);
     chainCan.x.clearRect(0,0,sw,sh);
     chainCan.x.drawImage(S,0,0);
+    var was=chainSrc;               // the shutter may be feeding a full-size photograph
     chainSrc={el:chainCan.c, w:sw, h:sh};
-    try { b.frame(); } finally { chainSrc=null; }
+    try { b.frame(); } finally { chainSrc=was; }
     return true;
   }
   function paintRec(){
@@ -13238,35 +13302,47 @@
      has been driven to both of its ends without breaking, so the extremes
      are allowed, just rarer. Segments are picked evenly. */
   function applySettings(c,changed){
-    if(changed && c.size) c.size();
+    var i;
+    if(changed && changed.length){ for(i=0;i<changed.length;i++) if(changed[i].size) changed[i].size(); }
+    else if(changed===true && c.size) c.size();
+    if(c.prep) c.prep();
     buildControls();
     bindQuick();
     glimpse();
     STORE.save();
   }
   function rollDice(){
-    var c=CAMS[cur], rebuild=false;
+    var c=CAMS[cur], sized=[];
     if(!c.ctrl || !c.ctrl.length){ toast('Nothing on '+c.name+' to roll'); return; }
-    c.ctrl.forEach(function(sp){
-      var old=c.v[sp.k], val=old;
+    c.ctrl.slice().forEach(function(sp){
+      var obj=ctlObj(c,sp), own=ctlCam(c,sp), old=obj[sp.k], val=old;
       if(sp.t==='sld'){
         var q=(Math.random()+Math.random())/2, st=sp.step||1;
         val=sp.min+Math.round(q*(sp.max-sp.min)/st)*st;
         val=clamp(val,sp.min,sp.max);
-      } else if(sp.t==='seg' && sp.opts.length){
+      } else if((sp.t==='seg' || sp.t==='pick') && sp.opts.length){
         val=sp.opts[(Math.random()*sp.opts.length)|0][0];
       }
-      if(val!==old){ c.v[sp.k]=val; if(sp.rebuild) rebuild=true; }
+      if(val!==old){ obj[sp.k]=val; if((sp.rebuild||sp.relayout) && sized.indexOf(own)<0) sized.push(own); }
     });
-    applySettings(c,rebuild);
+    // the pair first, then whatever is inside it, so a new pair is built before it is sized again
+    sized.sort(function(a,b){ return (a===c?0:1)-(b===c?0:1); });
+    applySettings(c,sized);
     haptic(12);
     toast(c.name+' — rolled');
   }
   function resetCam(){
-    var c=CAMS[cur], d=STORE.defaults(c), rebuild=false;
-    (c.ctrl||[]).forEach(function(sp){ if(sp.rebuild && c.v[sp.k]!==d[sp.k]) rebuild=true; });
+    var c=CAMS[cur], d=STORE.defaults(c), sized=[];
+    (c.ctrl||[]).forEach(function(sp){
+      var own=ctlCam(c,sp);
+      if(own!==c){ if(sized.indexOf(own)<0){ sized.push(own); } return; }
+      if((sp.rebuild||sp.relayout) && c.v[sp.k]!==d[sp.k] && sized.indexOf(c)<0) sized.push(c);
+    });
+    // the camera's own settings, then those of any camera shown inside it
     STORE.reset(c);
-    applySettings(c,rebuild);
+    sized.forEach(function(own){ if(own!==c) STORE.reset(own); });
+    sized.sort(function(a,b){ return (a===c?0:1)-(b===c?0:1); });
+    applySettings(c,sized);
     toast(c.name+' — back to its defaults');
   }
   (function(){
