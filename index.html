@@ -9123,7 +9123,7 @@
     STORE.save();
     if(!quiet) toast(c.name +
       ((c.ears && EAR.on()) ? ' — listening' : '') +
-      (c.touch ? ' — drag the picture; the rail changes camera'
+      (c.touch ? ' — drag the picture; flick in from the side to move on'
                : ((PHOTO.on() && PHOTO.kind()==='image' && WANTS_MOTION[c.id]) ? ' — this one wants movement' : '')));
   }
 
@@ -9750,7 +9750,24 @@
   /* swipe the picture to change instrument */
   (function(){
     var x0=0,y0=0,t0=0,tracking=false;
-    var lastSwitch=0, dragCam=false;
+    var lastSwitch=0, dragCam=false, edge=false, byStamp=false;
+    /* When the finger actually moved, not when this got round to hearing
+       about it. On a heavy camera the page is busy drawing and touches queue
+       behind the frame: timed on arrival, a 150ms flick on Stack came in at
+       700ms, past the limit, and was thrown away — swiping simply did not
+       work on the slowest cameras. Every touch carries the time it happened. */
+    function stampOf(e){ return byStamp ? e.timeStamp : now(); }
+    /* A flick that starts at the side of the screen always changes camera,
+       even on the cameras that own the picture — otherwise swiping through
+       the rack stopped dead at each of them. The band starts a little way
+       in rather than at the very edge, because the outermost sliver belongs
+       to the phone: on iPhone Safari it is the back gesture, and taking it
+       would leave the page. Inside the band the drag is not handed to the
+       camera at all, so a flick never paints or turns anything on its way. */
+    function edgeBand(x){
+      var w=window.innerWidth||1, d=Math.min(x, w-x);
+      return d>=14 && d<=52;
+    }
     function uiTarget(t){
       while(t && t!==document.body){
         var id=t.id;
@@ -9776,15 +9793,18 @@
       if(e.touches && e.touches.length>1){ tracking=false; return; }
       var t=e.touches?e.touches[0]:e;
       if(sheet.className==='on' || uiTarget(e.target) || inControls(t.clientY)){ tracking=false; return; }
-      x0=t.clientX; y0=t.clientY; t0=now(); tracking=true;
+      byStamp=!!(e.timeStamp && e.timeStamp>0);
+      x0=t.clientX; y0=t.clientY; t0=stampOf(e); tracking=true;
       dragCam=false;
+      edge=edgeBand(t.clientX);
       var c=CAMS[cur];
-      if(c && c.touch){ var q=onStage(t); c.touch(q[0], q[1], 'down'); }
+      if(c && c.touch && !edge){ var q=onStage(t); c.touch(q[0], q[1], 'down'); }
     }
     function move(e){
       if(!tracking) return;
       var t=e.touches?e.touches[0]:e;
       var c=CAMS[cur];
+      if(edge){ if(e.preventDefault && e.cancelable) e.preventDefault(); return; }
       if(c && c.touch){
         dragCam=true;
         var q=onStage(t); c.touch(q[0], q[1], 'move');
@@ -9796,7 +9816,7 @@
       tracking=false;
       if(now()-lastSwitch < 600) return;
       var t=e.changedTouches?e.changedTouches[0]:e;
-      var dx=t.clientX-x0, dy=t.clientY-y0, dt=now()-t0;
+      var dx=t.clientX-x0, dy=t.clientY-y0, dt=stampOf(e)-t0;
       // a deliberate flick still changes camera, even on a camera you can drag
       /* Nineteen of the instruments read a drag on the picture as their own
          control, and a swipe laid over the top of that is a coin toss: the
@@ -9804,6 +9824,14 @@
          cannot, because turning Loaf's block IS a fast horizontal drag. On
          those cameras the picture belongs to the camera and the rail is how
          you leave. On the rest the swipe costs nothing, so it stays. */
+      var inward = edge && ((x0<(window.innerWidth||1)/2) ? dx>0 : dx<0);
+      if(edge && inward && dt<600 && Math.abs(dx)>70 && Math.abs(dx)>Math.abs(dy)*1.6){
+        lastSwitch=now();
+        hideHint();
+        haptic(8);
+        activate(cur + (dx<0?1:-1));
+        return;
+      }
       if(!(CAMS[cur] && CAMS[cur].touch) &&
          dt<600 && Math.abs(dx)>110 && Math.abs(dx)>Math.abs(dy)*2.2){
         lastSwitch=now();

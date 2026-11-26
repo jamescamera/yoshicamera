@@ -109,6 +109,17 @@ And on the nineteen cameras that want the picture, swiping it no longer
 changes camera at all. The picture belongs to the camera; the rail is how
 you leave. On the other twenty-two the swipe costs nothing, so it stays.
 
+Two things changed after that. A swipe was timed from when the page got
+round to handling it rather than from when the finger moved, so on the
+heaviest cameras — where touches queue behind a slow frame — a quick flick
+arrived looking like a slow drag and was thrown away; Stack and Prism
+ignored swipes altogether. Swipes are now timed by the stamp each touch
+carries. And a quick flick in from the side of the screen now changes camera
+on every camera, including the ones that own the picture, so swiping through
+the rack no longer stops dead at each of them. The band starts a little way
+in from the edge, because the outermost sliver is the phone's own back
+gesture.
+
 ---
 
 ## What else it does
